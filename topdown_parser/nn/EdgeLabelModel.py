@@ -1,0 +1,61 @@
+import torch
+from allennlp.data import Vocabulary
+from allennlp.models import Model
+from allennlp.modules import FeedForward
+
+
+class EdgeLabelModel(Model):
+
+    def __init__(self, vocab: Vocabulary, formalism : str):
+        super().__init__(vocab)
+        self.formalism = formalism
+        self.output_namespace = formalism+"_labels"
+        self.vocab_size = self.vocab.get_vocab_size(self.output_namespace)
+
+    def set_input(self, encoded_input : torch.Tensor, mask : torch.Tensor) -> None:
+        """
+        Set input for current batch.
+        :param mask: shape (batch_size, input_seq_len)
+        :param encoded_input: shape (batch_size, input_seq_len, encoder output dim)
+        :return:
+        """
+        raise NotImplementedError()
+
+    def edge_label_scores(self, encoder_indices : torch.Tensor, decoder : torch.Tensor) -> torch.Tensor:
+        """
+        Retrieve label scores for decoder vector and indices into the encoded_input.
+        :param encoder_indices: shape (batch_size) indicating the destination of the edge
+        :param decoder: shape (batch_size, decoder_dim)
+        :return: a tensor of shape (batch_size, edge_label_vocab) with log probabilities, normalized over vocabulary dimension.
+        """
+        raise NotImplementedError()
+
+
+@EdgeLabelModel.register("simple")
+class SimpleEdgeLabelModel(EdgeLabelModel):
+
+    def __init__(self, vocab: Vocabulary, formalism : str, mlp : FeedForward):
+        super().__init__(vocab,formalism)
+        self.feedforward = mlp
+        self.output_layer = torch.nn.Linear(mlp.get_output_dim(), self.vocab_size)
+
+    def set_input(self, encoded_input : torch.Tensor, mask : torch.Tensor) -> None:
+        self.encoded_input = encoded_input
+        self.mask = mask
+
+    def edge_label_scores(self, encoder_indices : torch.Tensor, decoder : torch.Tensor) -> torch.Tensor:
+        """
+
+        :param encoder_indices: (batch_size,)
+        :param decoder: shape (batch_size, decoder_dim)
+        :return:
+        """
+        batch_size, _, encoder_dim = self.encoded_input.shape
+        vectors_in_question = self.encoded_input[range(batch_size),encoder_indices, :]
+        assert vectors_in_question.shape == (batch_size, encoder_dim)
+
+        logits = self.output_layer(self.feedforward(torch.cat([vectors_in_question, decoder], dim=1)))
+
+        assert logits.shape == (batch_size, self.vocab_size)
+
+        return torch.log_softmax(logits, dim=1)
