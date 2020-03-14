@@ -1,3 +1,5 @@
+from typing import Optional
+
 import torch
 from allennlp.data import Vocabulary
 from allennlp.models import Model
@@ -39,14 +41,17 @@ class AttentionEdgeModel(EdgeModel):
         self.attention = attention
         self.attention._normalize = False
 
-        self.encoded_input = None
-        self.mask = None
+        self.encoded_input : Optional[torch.Tensor] = None
+        self.mask : Optional[torch.Tensor] = None
 
     def set_input(self, encoded_input : torch.Tensor, mask : torch.Tensor) -> None:
         self.encoded_input = encoded_input
         self.mask = mask
 
     def edge_scores(self, decoder : torch.Tensor) -> torch.Tensor:
+        if self.encoded_input is None:
+            raise ValueError("Please call set_input first")
+
         scores = self.attention(decoder, self.encoded_input, self.mask) # (batch_size, input_seq_len)
         assert scores.shape == self.encoded_input.shape[:2]
 

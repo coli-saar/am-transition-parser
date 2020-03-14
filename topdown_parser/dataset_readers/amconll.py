@@ -1,6 +1,7 @@
 from typing import Dict, Tuple, List, Any, Iterable
 import logging
 
+import torch
 from allenpipeline import OrderedDatasetReader
 from overrides import overrides
 from conllu.parser import parse_line, DEFAULT_FIELDS
@@ -12,13 +13,13 @@ from allennlp.data.instance import Instance
 from allennlp.data.token_indexers import SingleIdTokenIndexer, TokenIndexer
 from allennlp.data.tokenizers import Token
 
+from .ContextField import ContextField
 from .amconll_tools import parse_amconll, AMSentence
 from ..transition_system import TransitionSystem
 
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
 
 import numpy as np
-
 
 
 @DatasetReader.register("amconll")
@@ -31,14 +32,16 @@ class AMConllDatasetReader(OrderedDatasetReader):
     token_indexers : ``Dict[str, TokenIndexer]``, optional (default=``{"tokens": SingleIdTokenIndexer()}``)
         The token indexers to be applied to the words TextField.
     """
+
     def __init__(self,
-                 transition_system : TransitionSystem,
+                 transition_system: TransitionSystem,
                  token_indexers: Dict[str, TokenIndexer] = None,
-                 validate : bool = True,
-                 lazy: bool = False, fraction:float = 1.0, only_read_fraction_if_train_in_filename : bool = False) -> None:
+                 validate: bool = True,
+                 lazy: bool = False, fraction: float = 1.0,
+                 only_read_fraction_if_train_in_filename: bool = False) -> None:
         super().__init__(lazy)
         self.validate = validate
-        self.transition_system = transition_system
+        self.transition_system: TransitionSystem = transition_system
         self._token_indexers = token_indexers or {'tokens': SingleIdTokenIndexer()}
         self.fraction = fraction
         self.only_read_fraction_if_train_in_filename = only_read_fraction_if_train_in_filename
@@ -46,19 +49,20 @@ class AMConllDatasetReader(OrderedDatasetReader):
     def read_file(self, file_path: str) -> Iterable[Instance]:
         # if `file_path` is a URL, redirect to the cache
         file_path = cached_path(file_path)
-        if self.fraction < 0.9999 and (not self.only_read_fraction_if_train_in_filename or (self.only_read_fraction_if_train_in_filename and "train" in file_path)):
+        if self.fraction < 0.9999 and (not self.only_read_fraction_if_train_in_filename or (
+                self.only_read_fraction_if_train_in_filename and "train" in file_path)):
             with open(file_path, 'r') as amconll_file:
-                logger.info("Reading a fraction of "+str(self.fraction)+" of the AM dependency trees from amconll dataset at: %s", file_path)
+                logger.info("Reading a fraction of " + str(
+                    self.fraction) + " of the AM dependency trees from amconll dataset at: %s", file_path)
                 sents = list(parse_amconll(amconll_file))
-                for i,am_sentence in  enumerate(sents):
+                for i, am_sentence in enumerate(sents):
                     if i <= len(sents) * self.fraction:
                         yield self.text_to_instance(am_sentence)
         else:
             with open(file_path, 'r') as amconll_file:
                 logger.info("Reading AM dependency trees from amconll dataset at: %s", file_path)
-                for i,am_sentence in  enumerate(parse_amconll(amconll_file)):
+                for i, am_sentence in enumerate(parse_amconll(amconll_file)):
                     yield self.text_to_instance(am_sentence)
-
 
     @overrides
     def text_to_instance(self,  # type: ignore
@@ -87,16 +91,58 @@ class AMConllDatasetReader(OrderedDatasetReader):
         fields["lemmas"] = SequenceLabelField(am_sentence.get_lemmas(), tokens, label_namespace="lemmas")
 
         decisions = list(self.transition_system.get_order(am_sentence))
+        active_nodes = list(self.transition_system.get_active_nodes(am_sentence))
 
-        if self.validate:
-            reconstructed = self.transition_system.get_dep_tree(decisions, am_sentence)
-            assert am_sentence == reconstructed
+        if True:  # self.validate:
+            assert decisions[0].position == 0
+            assert active_nodes[0] == 0
 
-        seq = ListField([ LabelField(decision.position, skip_indexing=True) for decision in decisions])
+            assert len(decisions) == len(active_nodes) + 1
+
+            # Try to reconstruct tree
+            stripped_sentence = am_sentence.strip_annotation()
+
+            self.transition_system.reset_parses([stripped_sentence], len(stripped_sentence.words) + 1)
+            next_active = torch.tensor([0])
+            # print(am_sentence)
+            contexts = dict()
+            for i in range(1, len(decisions)):
+                #Gather context
+                context = self.transition_system.gather_context(next_active)
+                for k, v in context.items():
+                    if k not in contexts:
+                        contexts[k] = []
+                    contexts[k].append(v.numpy())
+                # print(i, next_active, decisions[i].position, self.transition_system.gather_context(next_active))
+
+                next_active, valid_choices = self.transition_system.step(torch.tensor([decisions[i].position]),
+                                                                         [decisions[i].label])
+
+                if i == len(decisions) - 1:  # there are no further active nodes after this step
+                    break
+
+                assert int(next_active) == active_nodes[
+                    i], f"The next active node according to step ({int(next_active)}) doesn't agree with the pre-calculated one ({active_nodes[i]})"
+                assert valid_choices[0, decisions[
+                    i + 1].position] == 1, f"the gold choice ({decisions[i + 1].position}) for the next step is not allowed (f{valid_choices})"
+
+            reconstructed = self.transition_system.retrieve_parses()
+
+            assert all(x.head == y.head for x, y in zip(am_sentence, reconstructed[0]))
+            assert all(x.label == y.label for x, y in zip(am_sentence, reconstructed[0]))
+            # TODO: check supertags
+
+        seq = ListField([LabelField(decision.position, skip_indexing=True) for decision in decisions])
         fields["seq"] = seq
-        fields["active_nodes"] = ListField([ LabelField(active_node, skip_indexing=True) for active_node in self.transition_system.get_active_nodes(am_sentence)])
-        fields["labels"] = SequenceLabelField([decision.label for decision in decisions],seq, label_namespace=formalism+"_labels")
-        fields["label_mask"] = SequenceLabelField([int(decision.label != "") for decision in decisions],seq)
+        fields["active_nodes"] = ListField(
+            [LabelField(active_node, skip_indexing=True) for active_node in active_nodes])
+        fields["labels"] = SequenceLabelField([decision.label for decision in decisions], seq,
+                                              label_namespace=formalism + "_labels")
+        fields["label_mask"] = SequenceLabelField([int(decision.label != "") for decision in decisions], seq)
+
+        fields["context"] = ContextField(
+            {name: ListField([ArrayField(array, dtype=array.dtype) for array in liste]) for name, liste in
+             contexts.items()})
 
         # fields["supertags"] = SequenceLabelField(am_sentence.get_supertags(), tokens, label_namespace=formalism+"_supertag_labels")
         # fields["lexlabels"] = SequenceLabelField(am_sentence.get_lexlabels(), tokens, label_namespace=formalism+"_lex_labels")
@@ -104,6 +150,6 @@ class AMConllDatasetReader(OrderedDatasetReader):
         # fields["head_indices"] = SequenceLabelField(am_sentence.get_heads(),tokens,label_namespace="head_index_tags")
 
         fields["metadata"] = MetadataField({"formalism": formalism,
-                                            "am_sentence" : am_sentence,
-                                            "is_annotated" : am_sentence.is_annotated()})
+                                            "am_sentence": am_sentence,
+                                            "is_annotated": am_sentence.is_annotated()})
         return Instance(fields)

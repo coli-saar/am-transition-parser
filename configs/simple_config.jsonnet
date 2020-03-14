@@ -1,8 +1,9 @@
 
 local num_epochs = 50;
-local device = -1;
+local device = 0;
 
 local word_dim = 128;
+local pos_embedding = 32;
 
 local encoder_dim = 256;
 
@@ -25,6 +26,18 @@ local data_iterator = {
     "dataset_reader": dataset_reader,
     "validation_dataset_reader" : dataset_reader,
 
+    "validation_command" : {
+
+        "type" : "bash_evaluation_command",
+        "command" : "python topdown_parser/evaluation/am_dep_las.py {gold_file} {system_output}",
+
+        "result_regexes" : {
+            "UAS" : [6, "UAS.* % (?P<value>[0-9.]+)"],
+            "LAS" : [7, "LAS.* % (?P<value>[0-9.]+)"]
+        }
+    },
+
+
 
     "iterator": data_iterator,
     "model": {
@@ -32,14 +45,19 @@ local data_iterator = {
         "transition_system" : {
             "type" : "dfs"
         },
+
+//        "context_provider" : {
+//            "type" : "parents"
+//        },
+
         "encoder" : {
             "type" : "lstm",
-            "input_size" : word_dim,
+            "input_size" : word_dim + pos_embedding,
             "hidden_size" : encoder_dim,
             "bidirectional" : true,
         },
         "decoder" : {
-            "type" : "gru_cell",
+            "type" : "lstm_cell",
             "input_dim": 2*encoder_dim,
             "hidden_dim" : 2*encoder_dim
         },
@@ -66,11 +84,16 @@ local data_iterator = {
                 "hidden_dims" : [128],
                 "activations" : "tanh"
             }
+        },
+
+        "pos_tag_embedding" : {
+            "embedding_dim" : pos_embedding,
+            "vocab_namespace" : "pos"
         }
 
     },
-    "train_data_path": "data/tratz/gold-dev/toy.amconll",
-    "validation_data_path": "data/tratz/gold-dev/toy.amconll",
+    "train_data_path": "data/tratz/gold-dev/gold-dev.amconll",
+    "validation_data_path": "data/tratz/gold-dev/gold-dev.amconll",
 
     "evaluate_on_test" : false,
 

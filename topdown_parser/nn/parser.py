@@ -10,6 +10,7 @@ from torch.nn import Dropout, LSTMCell
 import torch.nn.functional as F
 
 from topdown_parser.dataset_readers.amconll_tools import AMSentence
+from topdown_parser.nn.ContextProvider import ContextProvider
 from topdown_parser.nn.DecoderCell import DecoderCell
 from topdown_parser.nn.EdgeLabelModel import EdgeLabelModel
 from topdown_parser.nn.EdgeModel import EdgeModel
@@ -27,12 +28,14 @@ class TopDownDependencyParser(Model):
                  edge_model: EdgeModel,
                  edge_label_model: EdgeLabelModel,
                  transition_system : TransitionSystem,
+                 context_provider : Optional[ContextProvider] = None,
                  pos_tag_embedding: Embedding = None,
                  lemma_embedding: Embedding = None,
                  ne_embedding: Embedding = None,
                  input_dropout: float = 0.0
                  ):
         super().__init__(vocab)
+        self.context_provider = context_provider
         self.transition_system = transition_system
         self.decoder = decoder
         self.edge_model = edge_model
@@ -50,6 +53,9 @@ class TopDownDependencyParser(Model):
 
         self._head_sentinel = torch.nn.Parameter(torch.randn([1, 1, self.encoder_output_dim]), requires_grad=True)
 
+        self.head_decisions_correct = 0
+        self.decisions = 0
+
     def forward(self, words: Dict[str, torch.Tensor],
                 pos_tags: torch.LongTensor,
                 lemmas: torch.LongTensor,
@@ -57,6 +63,7 @@ class TopDownDependencyParser(Model):
                 metadata: List[Dict[str, Any]],
                 order_metadata: List[Dict[str, Any]],
                 seq: Optional[torch.Tensor] = None,
+                context : Optional[Dict[str, torch.Tensor]] = None,
                 active_nodes : Optional[torch.Tensor] = None,
                 labels: Optional[torch.Tensor] = None,
                 label_mask: Optional[torch.Tensor] = None) -> Dict[str, torch.Tensor]:
@@ -72,8 +79,8 @@ class TopDownDependencyParser(Model):
 
         sentences = [ m["am_sentence"] for m in metadata]
         ret = {}
-        if seq is not None and labels is not None and label_mask is not None:
-            ret["loss"] = self.compute_loss(state, seq, active_nodes, labels, label_mask, sentences)
+        if seq is not None and labels is not None and label_mask is not None and context is not None:
+            ret["loss"] = self.compute_loss(state, seq, active_nodes, labels, label_mask, context)
 
         if not self.training:
             if "loss" in ret:
@@ -124,9 +131,11 @@ class TopDownDependencyParser(Model):
         return {"encoded_input": encoded_text, "input_mask": mask}
 
     def compute_loss(self, state: Dict[str, torch.Tensor], seq: torch.Tensor, active_nodes : torch.Tensor,
-                     labels: torch.Tensor, label_mask: torch.Tensor, sentences : List[AMSentence]) -> torch.Tensor:
+                     labels: torch.Tensor, label_mask: torch.Tensor, context : Dict[str, torch.Tensor]) -> torch.Tensor:
         """
         Computes the loss.
+        :param context: a dictionary with key describing the context (parents, siblings) and values of shape (batch_size, decision seq len, *)
+            with additional information for each decision.
         :param active_nodes: shape (batch_size, input_seq_len) with currently active node (e.g. top of stack)
         :param state: state of lstm
         :param seq: shape (batch_size, input_seq_len) with indices which elements to pick
@@ -151,6 +160,12 @@ class TopDownDependencyParser(Model):
             assert current_node.shape == (batch_size,)
 
             encoding_current_node = state["encoded_input"][range(batch_size), current_node]
+
+            if self.context_provider:
+                # Generate context snapshot
+                current_context = { feature_name : tensor[:, step].squeeze() for feature_name, tensor in context.items()}
+                encoding_current_node = self.context_provider.forward(encoding_current_node, state, current_context)
+
             self.decoder.step(encoding_current_node)
             decoder_hidden = self.decoder.get_hidden_state()
             assert decoder_hidden.shape == (batch_size, self.decoder_output_dim)
@@ -168,8 +183,10 @@ class TopDownDependencyParser(Model):
             current_mask = seq[:, step+1] >= 0 # are we already in the padding region?
             #target_gold_edges = F.relu(target_gold_edges)
 
-            #loss = loss + current_mask * F.nll_loss(edge_scores, target_gold_edges, reduction="none") #current_mask * edge_scores[range(batch_size), target_gold_edges]
-            #max_values, _ = torch.max(edge_scores, dim=1)
+            max_values, argmax = torch.max(edge_scores, dim=1) # shape (batch_size,)
+            self.head_decisions_correct += torch.sum(current_mask * (target_gold_edges == argmax)).cpu().numpy()
+            self.decisions += torch.sum(current_mask).cpu().numpy()
+
             #loss = loss + current_mask * (edge_scores[range(batch_size), target_gold_edges] - max_values) #TODO: check no log_softmax! TODO margin.
             loss = loss + current_mask * edge_scores[range(batch_size), target_gold_edges]
 
@@ -199,6 +216,7 @@ class TopDownDependencyParser(Model):
         :return:
         """
         batch_size, input_seq_len, encoder_dim = state["encoded_input"].shape
+        device = get_device_id(state["encoded_input"])
 
         self.edge_model.set_input(state["encoded_input"], state["input_mask"])
         self.edge_label_model.set_input(state["encoded_input"], state["input_mask"])
@@ -210,13 +228,19 @@ class TopDownDependencyParser(Model):
 
         output_seq_len = input_seq_len*2 + 1
 
-        encoding_current_node = state["encoded_input"][:, 0, :] #start with artificial root.
+        next_active_nodes = torch.zeros(batch_size, dtype=torch.long, device = device) #start with artificial root.
 
-        valid_choices = torch.ones((batch_size, input_seq_len), device = get_device_id(encoding_current_node))
-        all_selected_nodes = [torch.zeros(batch_size, device= get_device_id(encoding_current_node))]
+        valid_choices = torch.ones((batch_size, input_seq_len), device = device)
+        all_selected_nodes = [torch.zeros(batch_size, device = device)]
 
         for step in range(output_seq_len):
+            encoding_current_node = state["encoded_input"][range(batch_size), next_active_nodes]
+
             # Feed current node to decoder
+            if self.context_provider:
+                # Generate context snapshot
+                current_context = self.transition_system.gather_context(next_active_nodes)
+                encoding_current_node = self.context_provider.forward(encoding_current_node, state, current_context)
 
             self.decoder.step(encoding_current_node)
             decoder_hidden = self.decoder.get_hidden_state()
@@ -256,8 +280,18 @@ class TopDownDependencyParser(Model):
             if torch.all(valid_choices == 0):
                 break
 
-            encoding_current_node = state["encoded_input"][range(batch_size), next_active_nodes]
+
 
         return self.transition_system.retrieve_parses()
+
+    def get_metrics(self, reset: bool = False) -> Dict[str, float]:
+        r = dict()
+        if self.decisions > 0:
+            r["unlabeled_head_decisions"] = self.head_decisions_correct / self.decisions * 100
+
+        if reset:
+            self.head_decisions_correct = 0
+            self.decisions = 0
+        return r
 
 
