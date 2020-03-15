@@ -1,7 +1,8 @@
-from typing import Dict, Any
+from typing import Dict, Any, List
 
 import torch
 from allennlp.common import Registrable
+from allennlp.nn.util import get_lengths_from_binary_sequence_mask
 from torch.nn import Module
 
 
@@ -23,6 +24,15 @@ class ContextProvider(Module, Registrable):
         """
         raise NotImplementedError()
 
+    def compute_context(self, state : Dict[str, torch.Tensor], context : Dict[str, torch.Tensor]) -> torch.Tensor:
+        """
+        Takes the context and distills it into a vector that can then be combined in forward with the representation of the current node.
+        :param state:
+        :param context:
+        :return:
+        """
+        raise NotImplementedError()
+
 
 
 @ContextProvider.register("no_context")
@@ -31,19 +41,71 @@ class NoContextProvider(ContextProvider):
     def forward(self, current_node : torch.Tensor, state : Dict[str, torch.Tensor], context : Dict[str, Any]) -> torch.Tensor:
         return current_node
 
-@ContextProvider.register("parents")
+@ContextProvider.register("parent")
 class ParentContextProvider(ContextProvider):
     """
     Add parent information in Ma et al. 2018 style
     """
 
-    def forward(self, current_node : torch.Tensor, state : Dict[str, torch.Tensor], context : Dict[str, Any]) -> torch.Tensor:
+    def compute_context(self, state : Dict[str, torch.Tensor], context : Dict[str, torch.Tensor]) -> torch.Tensor:
         batch_size = state["encoded_input"].shape[0]
 
         parents = context["parents"] # shape (batch_size,)
-        #mask = parents == 0 # which parents are 0? Skip those
+
         encoded_parents = state["encoded_input"][range(batch_size), parents] # shape (batch_size, encoder dim)
 
-        return current_node + encoded_parents
-        #return current_node + mask.unsqueeze(1) * encoded_parents
+        #mask = parents == 0 # which parents are 0? Skip those
+        #encoded_parents=  mask.unsqueeze(1) * encoded_parents
 
+        return encoded_parents
+
+    def forward(self, current_node : torch.Tensor, state : Dict[str, torch.Tensor], context : Dict[str, Any]) -> torch.Tensor:
+
+        return current_node + self.compute_context(state, context)
+
+
+@ContextProvider.register("most-recent-sibling")
+class SiblingContextProvider(ContextProvider):
+    """
+    Add information about most recent sibling, like Ma et al.
+    """
+
+    def compute_context(self, state : Dict[str, torch.Tensor], context : Dict[str, torch.Tensor]) -> torch.Tensor:
+        siblings = context["siblings"] #shape (batch_size, max_num_siblings)
+        batch_size, _ = siblings.shape
+
+        sibling_mask = context["siblings_mask"] # (batch_size, max_num_siblings)
+
+        number_of_siblings = get_lengths_from_binary_sequence_mask(sibling_mask) # (batch_size,)
+
+        most_recent_sibling = siblings[range(batch_size), number_of_siblings-1] # shape (batch_size,)
+
+        encoded_sibling = state["encoded_input"][range(batch_size), most_recent_sibling] # shape (batch_size, encoder_dim)
+
+        # Some nodes don't have siblings, mask them out:
+        encoded_sibling = (number_of_siblings != 0).unsqueeze(1) * encoded_sibling #shape (batch_size, encoder_dim)
+        return encoded_sibling
+
+    def forward(self, current_node : torch.Tensor, state : Dict[str, torch.Tensor], context : Dict[str, torch.Tensor]) -> torch.Tensor:
+
+        return current_node + self.compute_context(state, context)
+
+
+
+@ContextProvider.register("sum")
+class SumContextProver(ContextProvider):
+    """
+    Add information about most recent sibling, like Ma et al.
+    """
+
+    def __init__(self, providers : List[ContextProvider]):
+        super().__init__()
+        self.providers = providers
+
+    def forward(self, current_node : torch.Tensor, state : Dict[str, torch.Tensor], context : Dict[str, torch.Tensor]) -> torch.Tensor:
+        r = current_node
+
+        for provider in self.providers:
+            r = r + provider.compute_context(state, context)
+
+        return r

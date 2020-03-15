@@ -4,6 +4,7 @@ import torch
 from allennlp.data import Field, DataArray, Vocabulary
 from allennlp.data.fields import ListField
 
+SEPARATOR = "@--@"
 
 class ContextField(Field):
     """
@@ -16,8 +17,8 @@ class ContextField(Field):
     def as_tensor(self, padding_lengths: Dict[str, int]) -> DataArray:
         sub_padding_lengths = dict()
         for k,v in padding_lengths.items():
-            subfname = k.split("_")[0]
-            rest = '_'.join(k.split("_")[1:])
+            subfname = k.split(SEPARATOR)[0]
+            rest = '_'.join(k.split(SEPARATOR)[1:])
             if subfname not in sub_padding_lengths:
                 sub_padding_lengths[subfname] = dict()
             sub_padding_lengths[subfname][rest] = v
@@ -31,7 +32,7 @@ class ContextField(Field):
         ret = {}
         for name, subf in self.data.items():
             for k, v in subf.get_padding_lengths().items():
-                ret[name+"_"+k] = v
+                ret[name+SEPARATOR+k] = v
         return ret
 
     def batch_tensors(self, tensor_list: List[DataArray]) -> DataArray:

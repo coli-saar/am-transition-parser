@@ -37,11 +37,15 @@ def parse_amconll(fil):
     new_sentence = True
     entries = []
     attributes = dict()
+    counter = 0
     for line in fil:
         line = line.rstrip("\n")
         if line.strip() == "":
             # sentence finished
+            counter += 1
             if len(entries) > 0:
+                if "id" not in attributes:
+                    attributes["id"] = str(counter)
                 yield entries, attributes
             new_sentence = True
 

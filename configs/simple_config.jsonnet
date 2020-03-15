@@ -8,16 +8,20 @@ local pos_embedding = 32;
 local encoder_dim = 256;
 
 
+local transition_system = {
+    "type" : "dfs",
+    "children_order" : "IO"
+};
+
 local dataset_reader = {
                "type": "amconll",
-               "transition_system" : {
-                "type" : "dfs"
-               }
+               "transition_system" : transition_system,
+               "overwrite_formalism" : "amr"
            };
 
 local data_iterator = {
         "type": "same_formalism",
-        "batch_size": 16,
+        "batch_size": 32,
        "formalisms" : ["amr"]
     };
 
@@ -42,13 +46,15 @@ local data_iterator = {
     "iterator": data_iterator,
     "model": {
         "type": "topdown",
-        "transition_system" : {
-            "type" : "dfs"
-        },
+        "transition_system" : transition_system,
 
-//        "context_provider" : {
-//            "type" : "parents"
-//        },
+        "context_provider" : {
+            "type" : "sum",
+            "providers" : [
+                {"type" : "parent"},
+                {"type" : "most-recent-sibling"}
+            ]
+        },
 
         "encoder" : {
             "type" : "lstm",
@@ -68,12 +74,15 @@ local data_iterator = {
                 },
         },
         "edge_model" : {
-            "type" : "attention",
-            "attention" : {
-                "type" : "bilinear",
-                "vector_dim" : 2*encoder_dim,
-                "matrix_dim" : 2*encoder_dim
-            }
+//            "type" : "attention",
+//            "attention" : {
+//                "type" : "bilinear",
+//                "vector_dim" : 2*encoder_dim,
+//                "matrix_dim" : 2*encoder_dim
+//            }
+            "type" : "mlp",
+            "encoder_dim" : 2*encoder_dim,
+            "hidden_dim" : 256
         },
         "edge_label_model" : {
             "type" : "simple",
@@ -92,8 +101,8 @@ local data_iterator = {
         }
 
     },
-    "train_data_path": "data/tratz/gold-dev/gold-dev.amconll",
-    "validation_data_path": "data/tratz/gold-dev/gold-dev.amconll",
+    "train_data_path": "data/AMR/2015/gold-dev/gold-dev.amconll",
+    "validation_data_path": "data/AMR/2015/gold-dev/gold-dev.amconll",
 
     "evaluate_on_test" : false,
 

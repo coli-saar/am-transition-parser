@@ -5,9 +5,8 @@ from allennlp.common.checks import ConfigurationError
 from allennlp.data import Vocabulary
 from allennlp.models import Model
 from allennlp.modules import TextFieldEmbedder, Embedding, Seq2SeqEncoder
-from allennlp.nn.util import get_text_field_mask, get_final_encoder_states, get_lengths_from_binary_sequence_mask
-from torch.nn import Dropout, LSTMCell
-import torch.nn.functional as F
+from allennlp.nn.util import get_text_field_mask, get_final_encoder_states
+from torch.nn import Dropout
 
 from topdown_parser.dataset_readers.amconll_tools import AMSentence
 from topdown_parser.nn.ContextProvider import ContextProvider
@@ -15,7 +14,7 @@ from topdown_parser.nn.DecoderCell import DecoderCell
 from topdown_parser.nn.EdgeLabelModel import EdgeLabelModel
 from topdown_parser.nn.EdgeModel import EdgeModel
 from topdown_parser.nn.utils import get_device_id
-from topdown_parser.transition_system import TransitionSystem
+from topdown_parser.transition_systems.transition_system import TransitionSystem
 
 
 @Model.register("topdown")
@@ -154,6 +153,9 @@ class TopDownDependencyParser(Model):
 
         assert torch.all(seq[:, 0] == 0), "The first node in the traversal must be the artificial root with index 0"
 
+        if self.context_provider:
+            self.transition_system.undo_one_batching(context)
+
         for step in range(output_seq_len - 1):
             # Retrieve current vector corresponding to current node and feed to decoder
             current_node = active_nodes[:, step]
@@ -162,8 +164,8 @@ class TopDownDependencyParser(Model):
             encoding_current_node = state["encoded_input"][range(batch_size), current_node]
 
             if self.context_provider:
-                # Generate context snapshot
-                current_context = { feature_name : tensor[:, step].squeeze() for feature_name, tensor in context.items()}
+                # Generate context snapshot of current time-step.
+                current_context = { feature_name : tensor[:, step] for feature_name, tensor in context.items()}
                 encoding_current_node = self.context_provider.forward(encoding_current_node, state, current_context)
 
             self.decoder.step(encoding_current_node)
