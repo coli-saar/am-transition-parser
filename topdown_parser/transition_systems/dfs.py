@@ -56,20 +56,6 @@ class DFS(TransitionSystem):
         r = self._construct_seq(t)
         return r
 
-    def get_active_nodes(self, sentence: AMSentence) -> Iterable[int]:
-        decisions = self.get_order(sentence)
-        stack: List[int] = []
-        seen: Set[int] = set()
-        for decision in decisions:
-            position = decision.position
-            if position in seen:
-                stack.pop()
-            else:
-                stack.append(position)
-            seen.add(position)
-            if stack:
-                yield stack[-1]
-
     def reset_parses(self, sentences: List[AMSentence], input_seq_len: int) -> None:
         self.input_seq_len = input_seq_len
         self.batch_size = len(sentences)

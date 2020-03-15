@@ -26,15 +26,6 @@ class TransitionSystem(Registrable):
         """
         raise NotImplementedError()
 
-    def get_active_nodes(self, sentence : AMSentence) -> Iterable[int]:
-        """
-        Pre-compute the sequence of "active" nodes, e.g. nodes that are on top of the stack.
-        The active nodes use 1-based indexing (i.e. you can derive them from self.get_order())
-        :param sentence:
-        :return:
-        """
-        raise NotImplementedError()
-
     def reset_parses(self, sentences : List[AMSentence], input_seq_len: int) -> None:
         """
         Set the sentences that will be parsed next.

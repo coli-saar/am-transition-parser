@@ -92,19 +92,20 @@ class AMConllDatasetReader(OrderedDatasetReader):
         fields["lemmas"] = SequenceLabelField(am_sentence.get_lemmas(), tokens, label_namespace="lemmas")
 
         decisions = list(self.transition_system.get_order(am_sentence))
-        active_nodes = list(self.transition_system.get_active_nodes(am_sentence))
+        #active_nodes = list(self.transition_system.get_active_nodes(am_sentence))
 
         ##################################################################
         #Validate decision sequence and gather context:
         assert decisions[0].position == 0
-        assert active_nodes[0] == 0
+        #assert active_nodes[0] == 0
 
-        assert len(decisions) == len(active_nodes) + 1
+        #assert len(decisions) == len(active_nodes) + 1
 
         # Try to reconstruct tree
         stripped_sentence = am_sentence.strip_annotation()
 
         self.transition_system.reset_parses([stripped_sentence], len(stripped_sentence.words) + 1)
+        active_nodes = [0]
         next_active = torch.tensor([0])
         # print(am_sentence)
         contexts = dict()
@@ -127,10 +128,9 @@ class AMConllDatasetReader(OrderedDatasetReader):
             if i == len(decisions) - 1:  # there are no further active nodes after this step
                 break
 
-            assert int(next_active) == active_nodes[
-                i], f"The next active node according to step ({int(next_active)}) doesn't agree with the pre-calculated one ({active_nodes[i]})"
+            active_nodes.append(int(next_active.numpy()))
             assert valid_choices[0, decisions[
-                i + 1].position] == 1, f"the gold choice ({decisions[i + 1].position}) for the next step is not allowed (f{valid_choices})"
+                i + 1].position] == 1, f"the gold choice ({decisions[i + 1].position}) for the next step is not allowed ({valid_choices})"
 
         reconstructed = self.transition_system.retrieve_parses()
 

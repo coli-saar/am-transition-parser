@@ -23,11 +23,39 @@ class DFSChildrenFirst(TransitionSystem):
     Afterwards, the first child is visited for the second time. Then the second child etc.
     """
 
+    def __init__(self, children_order: str, reverse_push_actions : bool = False):
+        """
+        Select children_order : "LR" (left to right) or "IO" (inside-out, recommended by Ma et al.)
+        reverse_push_actions means that the order of push actions is the opposite order in which the children of
+        the node are recursively visited.
+        """
+        self.reverse_push_actions = reverse_push_actions
+        assert children_order in ["LR", "IO", "RL"], "unknown children order"
+
+        self.children_order = children_order
+
     def _construct_seq(self, tree: Tree) -> List[Decision]:
         own_position = tree.node[0]
         push_actions = []
         recursive_actions = []
-        for child in tree.children:
+
+        if self.children_order == "LR":
+            children = tree.children
+        elif self.children_order == "RL":
+            children = reversed(tree.children)
+        elif self.children_order == "IO":
+            left_part = []
+            right_part = []
+            for child in tree.children:
+                if child.node[0] < own_position:
+                    left_part.append(child)
+                else:
+                    right_part.append(child)
+            children = list(reversed(left_part)) + right_part
+        else:
+            raise ValueError("Unknown children order: "+self.children_order)
+
+        for child in children:
             if child.node[1].label == "IGNORE":
                 continue
 
@@ -36,30 +64,15 @@ class DFSChildrenFirst(TransitionSystem):
 
         ending = [Decision(own_position, "", (tree.node[1].fragment, tree.node[1].typ), tree.node[1].lexlabel)]
 
+        if self.reverse_push_actions:
+            push_actions = list(reversed(push_actions))
+
         return push_actions + ending + recursive_actions
 
     def get_order(self, sentence: AMSentence) -> Iterable[Decision]:
         t = Tree.from_am_sentence(sentence)
         r = [Decision(t.node[0], t.node[1].label, ("", ""), "")] + self._construct_seq(t)
         return r
-
-    def get_active_nodes(self, sentence: AMSentence) -> Iterable[int]:
-        decisions = self.get_order(sentence)
-        stack: List[int] = [0]
-        sub_stack: List[int] = []
-        seen: Set[int] = {0}
-        yield 0
-        for decision in decisions[1:]:
-            position = decision.position
-            if position in seen:
-                stack.pop()
-                stack.extend(reversed(sub_stack))
-                sub_stack = []
-            else:
-                sub_stack.append(position)
-            seen.add(position)
-            if stack:
-                yield stack[-1]
 
     def reset_parses(self, sentences: List[AMSentence], input_seq_len: int) -> None:
         self.input_seq_len = input_seq_len
@@ -86,7 +99,10 @@ class DFSChildrenFirst(TransitionSystem):
                 if selected_node_in_batch_element in self.seen[i]:
                     popped = self.stack[i].pop()
                     assert popped == selected_nodes[i]
-                    self.stack[i].extend(reversed(self.sub_stack[i]))
+                    if self.reverse_push_actions:
+                        self.stack[i].extend(self.sub_stack[i])
+                    else:
+                        self.stack[i].extend(reversed(self.sub_stack[i]))
                     self.sub_stack[i] = []
                 else:
                     self.heads[i][selected_node_in_batch_element - 1] = self.stack[i][-1]
