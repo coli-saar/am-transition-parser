@@ -9,12 +9,6 @@ from topdown_parser.nn.utils import get_device_id
 from topdown_parser.transition_systems.transition_system import TransitionSystem, Decision, get_parent, get_siblings
 
 
-def flatten(l: Iterable[List[Any]]) -> List[Any]:
-    r = []
-    for x in l:
-        r.extend(x)
-    return r
-
 
 @TransitionSystem.register("dfs-children-first")
 class DFSChildrenFirst(TransitionSystem):
@@ -23,12 +17,13 @@ class DFSChildrenFirst(TransitionSystem):
     Afterwards, the first child is visited for the second time. Then the second child etc.
     """
 
-    def __init__(self, children_order: str, reverse_push_actions : bool = False):
+    def __init__(self, children_order: str, pop_with_0 : bool, reverse_push_actions : bool = False):
         """
         Select children_order : "LR" (left to right) or "IO" (inside-out, recommended by Ma et al.)
         reverse_push_actions means that the order of push actions is the opposite order in which the children of
         the node are recursively visited.
         """
+        self.pop_with_0 = pop_with_0
         self.reverse_push_actions = reverse_push_actions
         assert children_order in ["LR", "IO", "RL"], "unknown children order"
 
@@ -62,7 +57,10 @@ class DFSChildrenFirst(TransitionSystem):
             push_actions.append(Decision(child.node[0], child.node[1].label, ("", ""), ""))
             recursive_actions.extend(self._construct_seq(child))
 
-        ending = [Decision(own_position, "", (tree.node[1].fragment, tree.node[1].typ), tree.node[1].lexlabel)]
+        if self.pop_with_0:
+            ending = [Decision(0, "", (tree.node[1].fragment, tree.node[1].typ), tree.node[1].lexlabel)]
+        else:
+            ending = [Decision(own_position, "", (tree.node[1].fragment, tree.node[1].typ), tree.node[1].lexlabel)]
 
         if self.reverse_push_actions:
             push_actions = list(reversed(push_actions))
@@ -96,9 +94,14 @@ class DFSChildrenFirst(TransitionSystem):
         for i in range(self.batch_size):
             if self.stack[i]:
                 selected_node_in_batch_element = int(selected_nodes[i])
-                if selected_node_in_batch_element in self.seen[i]:
+
+                if (selected_node_in_batch_element in self.seen[i] and not self.pop_with_0) or \
+                    (selected_node_in_batch_element == 0 and self.pop_with_0):
                     popped = self.stack[i].pop()
-                    assert popped == selected_nodes[i]
+
+                    if not self.pop_with_0:
+                        assert popped == selected_nodes[i]
+
                     if self.reverse_push_actions:
                         self.stack[i].extend(self.sub_stack[i])
                     else:
@@ -121,7 +124,11 @@ class DFSChildrenFirst(TransitionSystem):
                     r.append(0)
                 else:
                     r.append(self.stack[i][-1])
-                    choices[self.stack[i][-1]] = 1  # we can close the current node
+                    # we can close the current node:
+                    if self.pop_with_0:
+                        choices[0] = 1
+                    else:
+                        choices[self.stack[i][-1]] = 1
 
                 for child in range(1, len(self.sentences[i]) + 1):  # or we can choose a node that has not been used yet
                     if child not in self.seen[i]:
@@ -154,31 +161,4 @@ class DFSChildrenFirst(TransitionSystem):
         :param active_nodes: tensor of shape (batch_size,) with nodes that are currently on top of the stack.
         :return:
         """
-        device = get_device_id(active_nodes)
-
-        assert active_nodes.shape == (self.batch_size,)
-        active_nodes = active_nodes.detach().cpu().numpy()
-
-        grandparents = []
-        siblings = []
-        for i in range(self.batch_size):
-            current_node = int(active_nodes[i])
-            grandparents.append(get_parent(self.heads[i], current_node))
-            siblings.append(get_siblings(self.children[i], self.heads[i], current_node))
-
-        max_no_siblings = max(len(n) for n in siblings)
-
-        with torch.no_grad():
-            ret = {"parents": torch.tensor(grandparents, device=device)}
-            sibling_tensor = torch.zeros((self.batch_size, max(1, max_no_siblings)), dtype=torch.long, device=device)
-            for i in range(self.batch_size):
-                for j, sibling in enumerate(siblings[i]):
-                    sibling_tensor[i, j] = sibling
-            ret["siblings"] = sibling_tensor
-            ret[
-                "siblings_mask"] = sibling_tensor != 0  # we initialized with 0 and 0 cannot possibly be a sibling of a node, because its the artificial root.
-            return ret
-
-    def undo_one_batching(self, context: Dict[str, torch.Tensor]) -> None:
-        # context["parents"] has size (batch_size, decision seq len, 1)
-        context["parents"] = context["parents"].squeeze(2)
+        return super()._gather_context(active_nodes, self.batch_size, self.heads, self.children)
