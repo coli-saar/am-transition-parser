@@ -64,17 +64,22 @@ class ParentContextProvider(ContextProvider):
         return current_node + self.compute_context(state, context)
 
 
-@ContextProvider.register("most-recent-sibling")
-class SiblingContextProvider(ContextProvider):
+class MostRecent(ContextProvider):
     """
-    Add information about most recent sibling, like Ma et al.
+    Add information about most recent sibling/child.
     """
+
+    def __init__(self, context_key : str, mask_key : str):
+        super().__init__()
+        self.context_key = context_key
+        self.mask_key = mask_key
 
     def compute_context(self, state : Dict[str, torch.Tensor], context : Dict[str, torch.Tensor]) -> torch.Tensor:
-        siblings = context["siblings"] #shape (batch_size, max_num_siblings)
+        # For the sake of the example, let's say we're looking for siblings
+        siblings = context[self.context_key] #shape (batch_size, max_num_siblings)
         batch_size, _ = siblings.shape
 
-        sibling_mask = context["siblings_mask"] # (batch_size, max_num_siblings)
+        sibling_mask = context[self.mask_key] # (batch_size, max_num_siblings)
 
         number_of_siblings = get_lengths_from_binary_sequence_mask(sibling_mask) # (batch_size,)
 
@@ -85,6 +90,42 @@ class SiblingContextProvider(ContextProvider):
         # Some nodes don't have siblings, mask them out:
         encoded_sibling = (number_of_siblings != 0).unsqueeze(1) * encoded_sibling #shape (batch_size, encoder_dim)
         return encoded_sibling
+
+    def forward(self, current_node : torch.Tensor, state : Dict[str, torch.Tensor], context : Dict[str, torch.Tensor]) -> torch.Tensor:
+
+        return current_node + self.compute_context(state, context)
+
+
+@ContextProvider.register("most-recent-sibling")
+class SiblingContextProvider(ContextProvider):
+    """
+    Add information about most recent sibling, like Ma et al.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.most_recent = MostRecent("siblings", "siblings_mask")
+
+    def compute_context(self, state : Dict[str, torch.Tensor], context : Dict[str, torch.Tensor]) -> torch.Tensor:
+        return self.most_recent.compute_context(state, context)
+
+    def forward(self, current_node : torch.Tensor, state : Dict[str, torch.Tensor], context : Dict[str, torch.Tensor]) -> torch.Tensor:
+
+        return current_node + self.compute_context(state, context)
+
+
+@ContextProvider.register("most-recent-child")
+class SiblingContextProvider(ContextProvider):
+    """
+    Add information about most recent sibling, like Ma et al.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.most_recent = MostRecent("children", "children_mask")
+
+    def compute_context(self, state : Dict[str, torch.Tensor], context : Dict[str, torch.Tensor]) -> torch.Tensor:
+        return self.most_recent.compute_context(state, context)
 
     def forward(self, current_node : torch.Tensor, state : Dict[str, torch.Tensor], context : Dict[str, torch.Tensor]) -> torch.Tensor:
 

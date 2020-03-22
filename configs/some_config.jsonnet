@@ -1,16 +1,24 @@
 
-local num_epochs = 50;
+local num_epochs = 100;
 local device = 0;
 
-local word_dim = 128;
+local word_dim = 200;
 local pos_embedding = 32;
 
-local encoder_dim = 256;
+local encoder_dim = 512;
+local batch_size = 4;
+
+local char_dim = 100;
+local num_filters = 50;
+local filters = [3];
+local max_filter = 3; //KEEP IN SYNC WITH filters!
+
 
 
 local transition_system = {
     "type" : "dfs",
-    "children_order" : "IO"
+    "children_order" : "IO",
+    "pop_with_0" : true
 };
 
 local formalism = "amr";
@@ -18,12 +26,24 @@ local formalism = "amr";
 local dataset_reader = {
                "type": "amconll",
                "transition_system" : transition_system,
-               "overwrite_formalism" : formalism
+               "overwrite_formalism" : formalism,
+
+              "token_indexers" : {
+                   "tokens" : {
+                       "type": "single_id",
+                        "lowercase_tokens": true
+                   },
+                   "token_characters" : {
+                       "type" : "characters",
+                       "min_padding_length" : max_filter
+                   }
+              }
+
            };
 
 local data_iterator = {
         "type": "same_formalism",
-        "batch_size": 16,
+        "batch_size": batch_size,
        "formalisms" : [formalism]
     };
 
@@ -53,42 +73,62 @@ local data_iterator = {
         "context_provider" : {
             "type" : "sum",
             "providers" : [
-                {"type" : "parent"},
-                {"type" : "most-recent-sibling"}
+//                {"type" : "parent"},
+//                {"type" : "most-recent-sibling"}
             ]
         },
 
         "input_dropout" : 0.33,
+        "encoder_output_dropout" : 0.33,
+
         "encoder" : {
              "type": "stacked_bidirectional_lstm",
-            "input_size": word_dim + pos_embedding,
+            "input_size": num_filters + word_dim + pos_embedding,
             "hidden_size": encoder_dim,
             "num_layers" : 3,
             "recurrent_dropout_probability" : 0.33,
             "layer_dropout_probability" : 0.33
         },
         "decoder" : {
-            "type" : "lstm_cell",
+            "type" : "ma-lstm",
             "input_dim": 2*encoder_dim,
-            "hidden_dim" : 2*encoder_dim
+            "hidden_dim" : 2*encoder_dim,
+            "input_dropout" : 0.33,
+            "recurrent_dropout" : 0.33
         },
         "text_field_embedder": {
                "tokens": {
                     "type": "embedding",
                     "embedding_dim": word_dim
                 },
+                "token_characters": {
+                  "type": "character_encoding",
+                      "embedding": {
+                        "embedding_dim": char_dim
+                      },
+                      "encoder": {
+                        "type": "cnn",
+                        "embedding_dim": char_dim,
+                        "num_filters": num_filters,
+                        "ngram_filter_sizes": filters
+                      }
+                }
         },
+
         "edge_model" : {
-//            "type" : "attention",
-//            "attention" : {
-//                "type" : "bilinear",
-//                "vector_dim" : 2*encoder_dim,
-//                "matrix_dim" : 2*encoder_dim
-//            }
             "type" : "mlp",
             "encoder_dim" : 2*encoder_dim,
-            "hidden_dim" : 512
+            "hidden_dim" : 512,
+//            "type" : "ma",
+//            "mlp" : {
+//                    "input_dim" : 2*encoder_dim,
+//                    "num_layers" : 1,
+//                    "hidden_dims" : 512,
+//                    "activations" : "elu",
+//                    "dropout" : 0.33
+//            }
         },
+
         "edge_label_model" : {
             "type" : "simple",
             "formalism" : formalism,
@@ -96,8 +136,13 @@ local data_iterator = {
                 "input_dim" : 2*2*encoder_dim,
                 "num_layers" : 1,
                 "hidden_dims" : [256],
-                "activations" : "tanh"
+                "activations" : "tanh",
+                "dropout" : 0.33
             }
+        },
+
+        "edge_loss" : {
+            "type" : "nll"
         },
 
         "pos_tag_embedding" : {
@@ -106,7 +151,7 @@ local data_iterator = {
         }
 
     },
-    "train_data_path": "data/AMR/2015/gold-dev/gold-dev.amconll",
+    "train_data_path": "data/AMR/2015/train/small.amconll",
     "validation_data_path": "data/AMR/2015/gold-dev/gold-dev.amconll",
 
     "evaluate_on_test" : false,
@@ -116,8 +161,10 @@ local data_iterator = {
         "cuda_device": device,
         "optimizer": {
             "type": "adam",
+            "betas" : [0.9, 0.9]
         },
         "num_serialized_models_to_keep" : 1,
+        "validation_metric" : "+LAS"
     },
 
     "dataset_writer":{

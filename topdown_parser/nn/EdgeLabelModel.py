@@ -1,7 +1,12 @@
+import math
+from copy import deepcopy
+
 import torch
 from allennlp.data import Vocabulary
 from allennlp.models import Model
 from allennlp.modules import FeedForward
+from torch.nn import Parameter
+import torch.nn.functional as F
 
 
 class EdgeLabelModel(Model):
@@ -59,3 +64,55 @@ class SimpleEdgeLabelModel(EdgeLabelModel):
         assert logits.shape == (batch_size, self.vocab_size)
 
         return torch.log_softmax(logits, dim=1)
+
+
+
+# @EdgeLabelModel.register("ma")
+# class MaEdgeModel(EdgeLabelModel):
+#
+#     def __init__(self, vocab: Vocabulary, formalism : str, mlp: FeedForward):
+#         super().__init__(vocab, formalism)
+#         self.head_mlp = mlp
+#         self.dep_mlp = deepcopy(mlp)
+#
+#         self._weight_matrix = Parameter(torch.Tensor(self.head_mlp.get_output_dim(), self.dep_mlp.get_output_dim()))
+#         self._bias = Parameter(torch.zeros(self.vocab_size))
+#
+#         self.q_weight = Parameter(torch.Tensor(self.head_mlp.get_output_dim()))
+#         self.key_weight = Parameter(torch.Tensor(self.dep_mlp.get_output_dim()))
+#         self.reset_parameters()
+#
+#     def reset_parameters(self):
+#         bound = 1 / math.sqrt(self.vector_dim)
+#         torch.nn.init.uniform_(self.q_weight, -bound, bound)
+#         bound = 1 / math.sqrt(self.matrix_dim)
+#         torch.nn.init.uniform_(self.key_weight, -bound, bound)
+#         torch.nn.init.xavier_uniform_(self._weight_matrix)
+#         torch.nn.init.constant_(self._bias, 0.)
+#
+#     def set_input(self, encoded_input: torch.Tensor, mask: torch.Tensor) -> None:
+#         # encoded_input: (batch_size, seq_len, encoder_dim)
+#         self.batch_size, self.seq_len, _ = encoded_input.shape
+#
+#         self.dependent_rep = self.dep_mlp(encoded_input) #(batch_size, seq_len, dependent_dim)
+#         self.dependent_rep_with_matrix = F.linear(self.dependent_rep, self._weight_matrix)
+#         self.mask = mask
+#
+#     def edge_label_scores(self, encoder_indices : torch.Tensor, decoder : torch.Tensor) -> torch.Tensor:
+#
+#         batch_size, _, encoder_dim = self.encoded_input.shape
+#         vectors_in_question = self.dependent_rep[range(batch_size),encoder_indices, :] #shape (batch_size, vector dim)
+#
+#         head_rep = self.head_mlp(decoder) #shape (batch_size, decoder dim)
+#
+#         head_term = torch.einsum("bv, v -> b", head_rep, self.q_weight)
+#         dep_term = torch.einsum("bv, v -> v", vectors_in_question, self.key_weight)
+#
+#         interaction = torch.einsum("", )
+#         #shape (batch_size, vocab size)
+#         return torch.log_softmax(logits, dim=1)
+
+
+
+
+

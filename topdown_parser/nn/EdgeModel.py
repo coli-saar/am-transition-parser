@@ -1,11 +1,14 @@
+from copy import deepcopy
 from typing import Optional
 
 import torch
 from allennlp.data import Vocabulary
 from allennlp.models import Model
-from allennlp.modules import Attention
+from allennlp.modules import Attention, FeedForward
 from allennlp.nn import Activation
 from allennlp.nn.util import masked_log_softmax
+
+from topdown_parser.nn.biaffine import BiaffineAttention
 
 
 class EdgeModel(Model):
@@ -56,7 +59,7 @@ class AttentionEdgeModel(EdgeModel):
         scores = self.attention(decoder, self.encoded_input, self.mask)  # (batch_size, input_seq_len)
         assert scores.shape == self.encoded_input.shape[:2]
 
-        return masked_log_softmax(scores, self.mask, dim=1)
+        return scores #masked_log_softmax(scores, self.mask, dim=1)
 
 
 
@@ -88,25 +91,36 @@ class MLPEdgeModel(EdgeModel):
         concatentated = self.activation(decoder_before_concat.unsqueeze(1) + self.input_before_concat) # shape (batch_size, input_seq_len, hidden_size)
         before_softmax = self.FinalLayer(concatentated).squeeze(2) # (batch_size, input_seq_len)
 
-        return masked_log_softmax(before_softmax, self.mask, dim=1)
+        return before_softmax
+        #return masked_log_softmax(before_softmax, self.mask, dim=1)
 
 
 
-
-
-
-#@EdgeModel.register("ma")
+@EdgeModel.register("ma")
 class MaEdgeModel(EdgeModel):
 
-    def __init__(self, vocab: Vocabulary, encoder_dim: int, hidden_size: int, activation : Activation = Activation.by_name("elu")):
+    def __init__(self, vocab: Vocabulary, mlp: FeedForward):
         super().__init__(vocab)
-        self.encoder_dim = encoder_dim
-        self.hidden_size = hidden_size
-        self.activation = activation
+        self.head_mlp = mlp
+        self.dep_mlp = deepcopy(mlp)
+
+        self.biaffine_attention = BiaffineAttention(self.head_mlp.get_output_dim(), self.dep_mlp.get_output_dim())
 
 
     def set_input(self, encoded_input: torch.Tensor, mask: torch.Tensor) -> None:
-        pass
+        # encoded_input: (batch_size, seq_len, encoder_dim)
+        self.batch_size, self.seq_len, _ = encoded_input.shape
+
+        dependent_rep = self.dep_mlp(encoded_input) #(batch_size, seq_len, dependent_dim)
+        self.biaffine_attention.set_input(dependent_rep)
+        self.mask = mask
 
     def edge_scores(self, decoder: torch.Tensor) -> torch.Tensor:
-        pass
+
+        head_rep = self.head_mlp(decoder)
+        raw_scores = self.biaffine_attention(head_rep) #shape (batch_size, seq_len)
+
+        assert raw_scores.shape == (self.batch_size, self.seq_len)
+
+        return raw_scores
+        #return masked_log_softmax(raw_scores, self.mask, dim=1)

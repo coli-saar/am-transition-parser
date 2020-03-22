@@ -4,11 +4,12 @@ import torch
 from allennlp.common.checks import ConfigurationError
 from allennlp.data import Vocabulary
 from allennlp.models import Model
-from allennlp.modules import TextFieldEmbedder, Embedding, Seq2SeqEncoder
+from allennlp.modules import TextFieldEmbedder, Embedding, Seq2SeqEncoder, InputVariationalDropout
 from allennlp.nn.util import get_text_field_mask, get_final_encoder_states
-from torch.nn import Dropout
+from torch.nn import Dropout, Dropout2d
 
 from topdown_parser.dataset_readers.amconll_tools import AMSentence
+from topdown_parser.losses.losses import EdgeExistenceLoss
 from topdown_parser.nn.ContextProvider import ContextProvider
 from topdown_parser.nn.DecoderCell import DecoderCell
 from topdown_parser.nn.EdgeLabelModel import EdgeLabelModel
@@ -27,13 +28,16 @@ class TopDownDependencyParser(Model):
                  edge_model: EdgeModel,
                  edge_label_model: EdgeLabelModel,
                  transition_system : TransitionSystem,
+                 edge_loss : EdgeExistenceLoss,
                  context_provider : Optional[ContextProvider] = None,
                  pos_tag_embedding: Embedding = None,
                  lemma_embedding: Embedding = None,
                  ne_embedding: Embedding = None,
-                 input_dropout: float = 0.0
+                 input_dropout: float = 0.0,
+                 encoder_output_dropout : float = 0.0
                  ):
         super().__init__(vocab)
+        self.edge_loss = edge_loss
         self.context_provider = context_provider
         self.transition_system = transition_system
         self.decoder = decoder
@@ -45,7 +49,9 @@ class TopDownDependencyParser(Model):
         self.ne_embedding = ne_embedding
         self.text_field_embedder = text_field_embedder
 
-        self._input_dropout = Dropout(input_dropout)
+        self._input_var_dropout = InputVariationalDropout(input_dropout)
+        self._encoder_output_dropout = InputVariationalDropout(encoder_output_dropout)
+        self.encoder_output_dropout_rate = encoder_output_dropout
 
         self.encoder_output_dim = encoder.get_output_dim()
         self.decoder_output_dim = self.encoder_output_dim
@@ -114,7 +120,8 @@ class TopDownDependencyParser(Model):
         if len(concatenated_input) > 1:
             embedded_text_input = torch.cat(concatenated_input, -1)
         mask = get_text_field_mask(words)  # shape (batch_size, input_len)
-        embedded_text_input = self._input_dropout(embedded_text_input)
+
+        embedded_text_input = self._input_var_dropout(embedded_text_input)
 
         encoded_text = self.encoder(embedded_text_input, mask)
         batch_size, seq_len, encoding_dim = encoded_text.shape
@@ -122,6 +129,8 @@ class TopDownDependencyParser(Model):
 
         # Concatenate the artificial root onto the sentence representation.
         encoded_text = torch.cat([head_sentinel, encoded_text], 1)
+
+        encoded_text = self._encoder_output_dropout(encoded_text)
 
         mask = torch.cat([torch.ones((batch_size, 1), dtype=torch.long, device=get_device_id(encoded_text)), mask],
                          dim=1)
@@ -156,6 +165,10 @@ class TopDownDependencyParser(Model):
         if self.context_provider:
             self.transition_system.undo_one_batching(context)
 
+        #Dropout mask for output of decoder
+        ones = loss.new_ones((batch_size, self.decoder_output_dim))
+        dropout_mask = torch.nn.functional.dropout(ones, self.encoder_output_dropout_rate, self.training, inplace=False)
+
         for step in range(output_seq_len - 1):
             # Retrieve current vector corresponding to current node and feed to decoder
             current_node = active_nodes[:, step]
@@ -171,6 +184,7 @@ class TopDownDependencyParser(Model):
             self.decoder.step(encoding_current_node)
             decoder_hidden = self.decoder.get_hidden_state()
             assert decoder_hidden.shape == (batch_size, self.decoder_output_dim)
+            decoder_hidden = decoder_hidden * dropout_mask
 
             #####################
             # Predict edges
@@ -190,7 +204,8 @@ class TopDownDependencyParser(Model):
             self.decisions += torch.sum(current_mask).cpu().numpy()
 
             #loss = loss + current_mask * (edge_scores[range(batch_size), target_gold_edges] - max_values) #TODO: check no log_softmax! TODO margin.
-            loss = loss + current_mask * edge_scores[range(batch_size), target_gold_edges]
+            #loss = loss + current_mask * edge_scores[range(batch_size), target_gold_edges]
+            loss = loss + self.edge_loss.compute_loss(edge_scores, target_gold_edges, current_mask, state["input_mask"])
 
             #####################
 
