@@ -78,14 +78,14 @@ class TransitionSystem(Registrable):
         assert active_nodes.shape == (batch_size,)
         active_nodes = active_nodes.detach().cpu().numpy()
 
-        grandparents = []
-        siblings = []
-        other_children = []
+        grandparents : List[int] = []
+        siblings : List[List[int]] = []
+        other_children : List[List[int]] = []
         for i in range(batch_size):
             current_node = int(active_nodes[i])
             grandparents.append(get_parent(heads[i], current_node))
             siblings.append(get_siblings(children[i], heads[i], current_node))
-            other_children.append(children[i])
+            other_children.append(children[i][current_node])
 
         max_no_siblings = max(len(n) for n in siblings)
 
