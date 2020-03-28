@@ -1,9 +1,13 @@
-from typing import Dict, Iterable
+import time
+from functools import partial
+from typing import Dict, Iterable, List
 import logging
 
 import torch
 from allenpipeline import OrderedDatasetReader
 from overrides import overrides
+
+import multiprocessing as mp
 
 from allennlp.common.file_utils import cached_path
 from allennlp.data.dataset_readers.dataset_reader import DatasetReader
@@ -35,16 +39,17 @@ class AMConllDatasetReader(OrderedDatasetReader):
                  token_indexers: Dict[str, TokenIndexer] = None,
                  lazy: bool = False, fraction: float = 1.0,
                  overwrite_formalism : str = None,
+                 workers : int = 1,
                  only_read_fraction_if_train_in_filename: bool = False) -> None:
         super().__init__(lazy)
+        self.workers = workers
         self.overwrite_formalism = overwrite_formalism
         self.transition_system: TransitionSystem = transition_system
         self._token_indexers = token_indexers or {'tokens': SingleIdTokenIndexer()}
         self.fraction = fraction
         self.only_read_fraction_if_train_in_filename = only_read_fraction_if_train_in_filename
 
-    def read_file(self, file_path: str) -> Iterable[Instance]:
-        # if `file_path` is a URL, redirect to the cache
+    def collect_sentences(self, file_path : str) -> List[AMSentence]:
         file_path = cached_path(file_path)
         if self.fraction < 0.9999 and (not self.only_read_fraction_if_train_in_filename or (
                 self.only_read_fraction_if_train_in_filename and "train" in file_path)):
@@ -52,14 +57,24 @@ class AMConllDatasetReader(OrderedDatasetReader):
                 logger.info("Reading a fraction of " + str(
                     self.fraction) + " of the AM dependency trees from amconll dataset at: %s", file_path)
                 sents = list(parse_amconll(amconll_file))
-                for i, am_sentence in enumerate(sents):
-                    if i <= len(sents) * self.fraction:
-                        yield self.text_to_instance(am_sentence)
+                return sents[:int(len(sents)*self.fraction)]
         else:
             with open(file_path, 'r') as amconll_file:
                 logger.info("Reading AM dependency trees from amconll dataset at: %s", file_path)
-                for i, am_sentence in enumerate(parse_amconll(amconll_file)):
-                    yield self.text_to_instance(am_sentence)
+                return list(parse_amconll(amconll_file))
+
+    def read_file(self, file_path: str) -> Iterable[Instance]:
+        # if `file_path` is a URL, redirect to the cache
+        sents : List[AMSentence] = self.collect_sentences(file_path)
+        t1 = time.time()
+        if self.workers < 2:
+            r = [self.text_to_instance(s) for s in sents]
+        else:
+            with mp.Pool(self.workers) as pool:
+                r = pool.map(self.text_to_instance, sents)
+        delta = time.time() - t1
+        logger.info(f"Reading took {round(delta,3)} seconds")
+        return r
 
     @overrides
     def text_to_instance(self,  # type: ignore
@@ -92,7 +107,6 @@ class AMConllDatasetReader(OrderedDatasetReader):
         fields["lemmas"] = SequenceLabelField(am_sentence.get_lemmas(), tokens, label_namespace="lemmas")
 
         decisions = list(self.transition_system.get_order(am_sentence))
-        #active_nodes = list(self.transition_system.get_active_nodes(am_sentence))
 
         ##################################################################
         #Validate decision sequence and gather context:
