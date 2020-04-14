@@ -1,6 +1,6 @@
 import time
 from functools import partial
-from typing import Dict, Iterable, List
+from typing import Dict, Iterable, List, Optional
 import logging
 
 import torch
@@ -17,7 +17,7 @@ from allennlp.data.token_indexers import SingleIdTokenIndexer, TokenIndexer
 from allennlp.data.tokenizers import Token
 
 from .ContextField import ContextField
-from .amconll_tools import parse_amconll, AMSentence
+from .amconll_tools import parse_amconll, AMSentence, is_welltyped
 from topdown_parser.transition_systems.transition_system import TransitionSystem
 
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
@@ -67,18 +67,18 @@ class AMConllDatasetReader(OrderedDatasetReader):
         # if `file_path` is a URL, redirect to the cache
         sents : List[AMSentence] = self.collect_sentences(file_path)
         t1 = time.time()
-        if self.workers < 2:
+        if self.workers < 2: #or self.workers >= len(sents):
             r = [self.text_to_instance(s) for s in sents]
         else:
             with mp.Pool(self.workers) as pool:
                 r = pool.map(self.text_to_instance, sents)
         delta = time.time() - t1
         logger.info(f"Reading took {round(delta,3)} seconds")
-        return r
+        return [x for x in r if x is not None]
 
     @overrides
     def text_to_instance(self,  # type: ignore
-                         am_sentence: AMSentence) -> Instance:
+                         am_sentence: AMSentence) -> Optional[Instance]:
         # pylint: disable=arguments-differ
         """
         Parameters
@@ -100,11 +100,18 @@ class AMConllDatasetReader(OrderedDatasetReader):
         else:
             formalism = am_sentence.attributes["framework"]
 
+        am_sentence = am_sentence.fix_dev_edge_labels()
+
         tokens = TextField([Token(w) for w in am_sentence.get_tokens(shadow_art_root=True)], self._token_indexers)
         fields["words"] = tokens
         fields["pos_tags"] = SequenceLabelField(am_sentence.get_pos(), tokens, label_namespace="pos")
         fields["ner_tags"] = SequenceLabelField(am_sentence.get_ner(), tokens, label_namespace="ner_labels")
         fields["lemmas"] = SequenceLabelField(am_sentence.get_lemmas(), tokens, label_namespace="lemmas")
+
+        if not is_welltyped(am_sentence):
+            print("Skipping not well-typed sentence")
+            print(am_sentence.get_tokens(shadow_art_root=False))
+            return None
 
         decisions = list(self.transition_system.get_order(am_sentence))
 
@@ -135,9 +142,9 @@ class AMConllDatasetReader(OrderedDatasetReader):
 
                 contexts[k].append(v.numpy())
             # print(i, next_active, decisions[i].position, self.transition_system.gather_context(next_active))
-
+            additional_choices = {"selected_labels" : [decisions[i].label], "selected_supertags" : ["--TYPE--".join(decisions[i].supertag)]}
             next_active, valid_choices = self.transition_system.step(torch.tensor([decisions[i].position]),
-                                                                     [decisions[i].label])
+                                                                    additional_choices )
 
             if i == len(decisions) - 1:  # there are no further active nodes after this step
                 break
@@ -150,7 +157,7 @@ class AMConllDatasetReader(OrderedDatasetReader):
 
         assert all(x.head == y.head for x, y in zip(am_sentence, reconstructed[0]))
         assert all(x.label == y.label for x, y in zip(am_sentence, reconstructed[0]))
-        # TODO: check supertags
+        #assert all(x.fragment == y.fragment and x.typ == y.typ for x, y in zip(am_sentence, reconstructed[0]))
 
         ##################################################################
 
@@ -164,10 +171,14 @@ class AMConllDatasetReader(OrderedDatasetReader):
                                               label_namespace=formalism + "_labels")
         fields["label_mask"] = SequenceLabelField([int(decision.label != "") for decision in decisions], seq)
 
-        # fields["supertags"] = SequenceLabelField(["--TYPE--".join(decision.supertag) for decision in decisions], seq,
-        #                                       label_namespace=formalism + "_supertags")
-        #
-        # fields["supertag_mask"] = SequenceLabelField([int(decision.supertag[1] != "") for decision in decisions], seq)
+        fields["lex_labels"] = SequenceLabelField([decision.lexlabel for decision in decisions], seq,
+                                              label_namespace=formalism + "_lex_labels")
+        fields["lex_label_mask"] = SequenceLabelField([int(decision.lexlabel != "") for decision in decisions], seq)
+
+        fields["supertags"] = SequenceLabelField(["--TYPE--".join(decision.supertag) for decision in decisions], seq,
+                                               label_namespace=formalism + "_supertags")
+
+        fields["supertag_mask"] = SequenceLabelField([int(decision.supertag[1] != "") for decision in decisions], seq)
 
         fields["context"] = ContextField(
             {name: ListField([ArrayField(array, dtype=array.dtype) for array in liste]) for name, liste in

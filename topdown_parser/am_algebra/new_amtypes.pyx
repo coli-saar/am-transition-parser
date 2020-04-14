@@ -36,6 +36,10 @@ def extract_constituents(depths) -> List[Tuple[int,int]]:
 UNIFY_PATTERN : re.Pattern = re.compile("(.+)_UNIFY_(.+)")
 UNIFY = "_UNIFY_"
 
+class NonAMTypeException(Exception):
+    def __init__(self, message):
+        super().__init__(message)
+
 class AMType(DiGraph):
     
     def __init__(self):
@@ -45,10 +49,12 @@ class AMType(DiGraph):
             
     def process_updates(self):
         self.closure()
-        
-        assert not self.has_cycle()
-        
-        assert self.verify()
+
+        if self.has_cycle():
+            raise NonAMTypeException("Supposed type has a cycle")
+
+        if not self.verify():
+            raise NonAMTypeException("verfiy failed")
             
         
     def verify(self) -> bool:
@@ -79,8 +85,8 @@ class AMType(DiGraph):
             t = AMType()
             t.is_bot = True
             return t
-        
-        assert tokens[-1] == ")"
+        if tokens[-1] != ")":
+            raise NonAMTypeException("Ill-formed string: "+s)
         
         t = AMType._parse_tokens(tokens[:-1])
         
@@ -90,7 +96,8 @@ class AMType(DiGraph):
         
     @staticmethod
     def _parse_tokens(s : List[str], parent = None, typ : "AMType" = None) -> "AMType":
-        assert s[0] == "("
+        if s[0] != "(":
+            raise NonAMTypeException("Ill-formed string: "+s)
         s = s[1:]
         depth = 0
         depths = []
@@ -382,7 +389,7 @@ class CombinationCache:
     def __init__(self):
         self.cache = dict()
         
-    def combinations(self,head,dependent) -> Set[Tuple[str,str]]:
+    def combinations(self,head : AMType, dependent : AMType) -> Set[Tuple[str,str]]:
         try:
             return self.cache[(head,dependent)]
         except KeyError:
@@ -390,6 +397,18 @@ class CombinationCache:
             self.cache[(head,dependent)] = combis
             return combis
 
+
+class ReadCache:
+
+    def __init__(self):
+        self.cache = dict()
+
+    def parse_str(self, s : str) -> AMType:
+        if s in self.cache:
+            return self.cache[s]
+        t = AMType.parse_str(s)
+        self.cache[s] = t
+        return t
 
 if __name__ == "__main__":
     from tqdm import tqdm
@@ -405,6 +424,8 @@ if __name__ == "__main__":
     print(t.get_apply_set(AMType.parse_str("(o2)")))
     
     #TODO: (s(mod_UNIFY_o(s_UNIFY_o2()), o2())) wird nicht geparst
+    # "(o(mod_UNIFY_s()), o2(s_UNIFY_o()), s())"
+    #
     
     if False:
     

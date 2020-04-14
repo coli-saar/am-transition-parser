@@ -4,6 +4,7 @@ from typing import List, Iterable, Optional, Tuple, Dict, Any, Set
 import torch
 from allennlp.common import Registrable
 
+from topdown_parser.dataset_readers.AdditionalLexicon import AdditionalLexicon
 from topdown_parser.dataset_readers.amconll_tools import AMSentence
 from topdown_parser.nn.utils import get_device_id
 
@@ -17,6 +18,9 @@ class Decision:
 
 
 class TransitionSystem(Registrable):
+
+    def __init__(self, additional_lexicon : Optional[AdditionalLexicon] = None):
+        self.additional_lexicon = additional_lexicon
 
     def get_order(self, sentence : AMSentence) -> Iterable[Decision]:
         """
@@ -36,11 +40,11 @@ class TransitionSystem(Registrable):
         """
         raise NotImplementedError()
 
-    def step(self, selected_nodes : torch.Tensor, selected_labels : List[str]) -> Tuple[torch.Tensor, torch.Tensor]:
+    def step(self, selected_nodes : torch.Tensor, additional_choices : Dict[str, List[str]]) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Informs the transition system about the last node chosen
         Returns the index of the node that will get a child next according to the transitions system.
-        :param selected_labels: a list of length batch_size with the current edge label predictions.
+        :param additional_choices: additional choices for each batch element, like edge labels for example.
         :param selected_nodes: (batch_size,), 1-based indexing
         :return: a tensor of shape (batch_size,) of currently active nodes
             and a tensor of shape (batch_size, input_seq_len) which for every input position says if it is a valid next choice.
@@ -64,12 +68,16 @@ class TransitionSystem(Registrable):
         """
         raise NotImplementedError()
 
-    def _gather_context(self, active_nodes: torch.Tensor, batch_size : int, heads : List[List[int]], children : List[Dict[int,List[int]]]) -> Dict[str, torch.Tensor]:
+    def _gather_context(self, active_nodes: torch.Tensor, batch_size : int,
+                        heads : List[List[int]], children : List[Dict[int,List[int]]],
+                        edge_labels : List[List[str]],
+                        supertags : Optional[List[List[str]]] = None) -> Dict[str, torch.Tensor]:
         """
         Helper function to gather the context
+        :param edge_labels: List[List[str]] edge labels for all nodes
         :param batch_size:
         :param heads: a list for the entire batch. Every element is a list of heads of the corresponding sentence
-        :param children: a list for the entire batch. Every element is a dictionary mapping nodes to the list of their children.
+        :param children: a list for the entire batch. Every element is a dictionary mapping nodes to the list of their children. 1-based
         :param active_nodes: tensor of shape (batch_size,) with nodes that are currently on top of the stack.
         :return:
         """
@@ -81,11 +89,21 @@ class TransitionSystem(Registrable):
         grandparents : List[int] = []
         siblings : List[List[int]] = []
         other_children : List[List[int]] = []
+        labels_of_other_children : List[List[str]] = []
+        supertags_of_current_node : List[str] = []
         for i in range(batch_size):
             current_node = int(active_nodes[i])
             grandparents.append(get_parent(heads[i], current_node))
             siblings.append(get_siblings(children[i], heads[i], current_node))
             other_children.append(children[i][current_node])
+            labels_of_other_children.append([edge_labels[i][child-1] for child in children[i][current_node]])
+
+            if supertags is not None:
+                if current_node == 0:
+                    supertags_of_current_node.append("_")
+                else:
+                    _, typ = AMSentence.split_supertag(supertags[i][current_node-1])
+                    supertags_of_current_node.append(typ)
 
         max_no_siblings = max(len(n) for n in siblings)
 
@@ -105,6 +123,20 @@ class TransitionSystem(Registrable):
             ret["children"] = children_tensor
             ret["children_mask"] = (children_tensor != 0) # 0 cannot be a child of a node.
 
+            if "edge_labels" in self.additional_lexicon.sublexica:
+                # edge labels of other children:
+                label_tensor = torch.zeros((batch_size, max(1, max(len(o) for o in labels_of_other_children))), dtype=torch.long, device=device)
+                #shape (batch_size, max. number of children)
+                for i in range(batch_size):
+                    for j, label in enumerate(labels_of_other_children[i]):
+                        label_tensor[i,j] = self.additional_lexicon.sublexica["edge_labels"].get_id(label)
+                ret["children_labels"] = label_tensor
+                #mask is children_mask
+
+            if "lexical_types" in self.additional_lexicon.sublexica and supertags is not None:
+                supertag_tensor = torch.tensor([self.additional_lexicon.sublexica["lexical_types"].get_id(t) for t in supertags_of_current_node], dtype=torch.long, device=device) #shape (batch_size,)
+                ret["lexical_types"] = supertag_tensor
+
             return ret
 
     def undo_one_batching(self, context : Dict[str, torch.Tensor]) -> None:
@@ -115,6 +147,9 @@ class TransitionSystem(Registrable):
         """
         # context["parents"] has size (batch_size, decision seq len, 1)
         context["parents"] = context["parents"].squeeze(2)
+
+        if "lexical_types" in context:
+            context["lexical_types"] = context["lexical_types"].squeeze(2)
 
 
 

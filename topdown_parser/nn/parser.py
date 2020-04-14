@@ -8,12 +8,13 @@ from allennlp.modules import TextFieldEmbedder, Embedding, Seq2SeqEncoder, Input
 from allennlp.nn.util import get_text_field_mask, get_final_encoder_states
 from torch.nn import Dropout, Dropout2d
 
-from topdown_parser.dataset_readers.amconll_tools import AMSentence
+from topdown_parser.dataset_readers.amconll_tools import AMSentence, is_welltyped, get_tree_type
 from topdown_parser.losses.losses import EdgeExistenceLoss
 from topdown_parser.nn.ContextProvider import ContextProvider
 from topdown_parser.nn.DecoderCell import DecoderCell
 from topdown_parser.nn.EdgeLabelModel import EdgeLabelModel
 from topdown_parser.nn.EdgeModel import EdgeModel
+from topdown_parser.nn.supertagger import Supertagger
 from topdown_parser.nn.utils import get_device_id
 from topdown_parser.transition_systems.transition_system import TransitionSystem
 
@@ -29,6 +30,8 @@ class TopDownDependencyParser(Model):
                  edge_label_model: EdgeLabelModel,
                  transition_system : TransitionSystem,
                  edge_loss : EdgeExistenceLoss,
+                 supertagger : Optional[Supertagger] = None,
+                 lex_label_tagger : Optional[Supertagger] = None,
                  context_provider : Optional[ContextProvider] = None,
                  pos_tag_embedding: Embedding = None,
                  lemma_embedding: Embedding = None,
@@ -37,6 +40,8 @@ class TopDownDependencyParser(Model):
                  encoder_output_dropout : float = 0.0
                  ):
         super().__init__(vocab)
+        self.lex_label_tagger = lex_label_tagger
+        self.supertagger = supertagger
         self.edge_loss = edge_loss
         self.context_provider = context_provider
         self.transition_system = transition_system
@@ -61,6 +66,18 @@ class TopDownDependencyParser(Model):
         self.head_decisions_correct = 0
         self.decisions = 0
 
+        self.supertags_correct = 0
+        self.supertag_decisions = 0
+        self.lex_labels_correct = 0
+        self.lex_label_decisions = 0
+
+        self.supertag_loss = torch.nn.CrossEntropyLoss(reduction="none")
+        self.lex_label_loss = torch.nn.CrossEntropyLoss(reduction="none")
+
+        self.well_typed = 0
+        self.has_empty_tree_type = 0
+        self.sentences_parsed = 0
+
     def forward(self, words: Dict[str, torch.Tensor],
                 pos_tags: torch.LongTensor,
                 lemmas: torch.LongTensor,
@@ -71,7 +88,11 @@ class TopDownDependencyParser(Model):
                 context : Optional[Dict[str, torch.Tensor]] = None,
                 active_nodes : Optional[torch.Tensor] = None,
                 labels: Optional[torch.Tensor] = None,
-                label_mask: Optional[torch.Tensor] = None) -> Dict[str, torch.Tensor]:
+                label_mask: Optional[torch.Tensor] = None,
+                lex_labels: Optional[torch.Tensor] = None,
+                lex_label_mask: Optional[torch.Tensor] = None,
+                supertags : Optional[torch.Tensor] = None,
+                supertag_mask : Optional[torch.Tensor] = None) -> Dict[str, torch.Tensor]:
 
         batch_size, seq_len = pos_tags.shape
         # Encode the input:
@@ -85,7 +106,7 @@ class TopDownDependencyParser(Model):
         sentences = [ m["am_sentence"] for m in metadata]
         ret = {}
         if seq is not None and labels is not None and label_mask is not None and context is not None:
-            ret["loss"] = self.compute_loss(state, seq, active_nodes, labels, label_mask, context)
+            ret["loss"] = self.compute_loss(state, seq, active_nodes, labels, label_mask, supertags, supertag_mask, lex_labels, lex_label_mask, context)
 
         if not self.training:
             if "loss" in ret:
@@ -96,6 +117,16 @@ class TopDownDependencyParser(Model):
 
             sentences = [s.strip_annotation() for s in sentences]
             predictions = self.parse_sentences(state, metadata[0]["formalism"], sentences)
+
+            #Compute some well-typedness statistics
+            for p in predictions:
+                ttyp = get_tree_type(p)
+                if ttyp is not None:
+                    self.well_typed += 1
+                    self.has_empty_tree_type += int(ttyp.is_empty_type())
+
+                self.sentences_parsed += 1
+
             ret["predictions"] = predictions
 
         return ret
@@ -139,16 +170,23 @@ class TopDownDependencyParser(Model):
         return {"encoded_input": encoded_text, "input_mask": mask}
 
     def compute_loss(self, state: Dict[str, torch.Tensor], seq: torch.Tensor, active_nodes : torch.Tensor,
-                     labels: torch.Tensor, label_mask: torch.Tensor, context : Dict[str, torch.Tensor]) -> torch.Tensor:
+                     labels: torch.Tensor, label_mask: torch.Tensor,
+                     supertags : torch.Tensor, supertag_mask : torch.Tensor,
+                     lex_labels : torch.Tensor, lex_label_mask : torch.Tensor,
+                     context : Dict[str, torch.Tensor]) -> torch.Tensor:
         """
         Computes the loss.
+        :param lex_label_mask: (batch_size, decision_seq_len) whether there is a decision to be made for the lexical label.
+        :param lex_labels: (batch_size, decision_seq_len, vocab size) which lexical label to pick for each decision
+        :param supertag_mask: (batch_size, decision_seq_len) indicating where supertags should be predicted.
+        :param supertags: shape (batch_size, decision_seq_len, supertag vocab) which supertag to pick for each decision
         :param context: a dictionary with key describing the context (parents, siblings) and values of shape (batch_size, decision seq len, *)
             with additional information for each decision.
         :param active_nodes: shape (batch_size, input_seq_len) with currently active node (e.g. top of stack)
         :param state: state of lstm
-        :param seq: shape (batch_size, input_seq_len) with indices which elements to pick
-        :param labels: (batch_size, input_seq_len) gold edge labels
-        :param label_mask: (batch_size, input_seq_len) indicating where edge labels should be predicted
+        :param seq: shape (batch_size, decision_seq_len) with indices which elements to pick
+        :param labels: (batch_size, decision_seq_len) gold edge labels
+        :param label_mask: (batch_size, decision_seq_len) indicating where edge labels should be predicted
         :return: a tensor of shape (batch_size,) with the loss
         """
 
@@ -157,6 +195,15 @@ class TopDownDependencyParser(Model):
 
         self.edge_model.set_input(state["encoded_input"], state["input_mask"])
         self.edge_label_model.set_input(state["encoded_input"], state["input_mask"])
+
+        bool_label_mask = label_mask.bool() #to speed things a little up
+        bool_supertag_mask = supertag_mask.bool()
+
+        if self.supertagger is not None:
+            self.supertagger.set_input(state["encoded_input"], state["input_mask"])
+
+        if self.lex_label_tagger is not None:
+            self.lex_label_tagger.set_input(state["encoded_input"], state["input_mask"])
 
         loss = torch.zeros(batch_size, device=get_device_id(seq))
 
@@ -209,19 +256,48 @@ class TopDownDependencyParser(Model):
 
             #####################
 
-            # Compute edge label scores
-            edge_label_scores = self.edge_label_model.edge_label_scores(target_gold_edges, decoder_hidden)
-            assert edge_label_scores.shape == (batch_size, self.edge_label_model.vocab_size)
+            if torch.any(bool_label_mask[:, step + 1]):
+                # Compute edge label scores
+                edge_label_scores = self.edge_label_model.edge_label_scores(target_gold_edges, decoder_hidden)
+                assert edge_label_scores.shape == (batch_size, self.edge_label_model.vocab_size)
 
-            gold_labels = labels[:, step + 1]
-            edge_loss = edge_label_scores[range(batch_size), gold_labels]
-            assert edge_loss.shape == (batch_size,)
+                gold_labels = labels[:, step + 1]
+                edge_loss = edge_label_scores[range(batch_size), gold_labels]
+                assert edge_loss.shape == (batch_size,)
 
-            # We don't have to predict an edge label everywhere, so apply the appropriate mask:
-            loss = loss + label_mask[:, step + 1] * edge_loss
-            #loss = loss + label_mask[:, step + 1] * F.nll_loss(edge_label_scores, gold_labels, reduction="none")
+                # We don't have to predict an edge label everywhere, so apply the appropriate mask:
+                loss = loss + label_mask[:, step + 1] * edge_loss
+                #loss = loss + label_mask[:, step + 1] * F.nll_loss(edge_label_scores, gold_labels, reduction="none")
 
             #####################
+
+            # Compute supertagging loss
+            if self.supertagger is not None and torch.any(bool_supertag_mask[:, step+1]):
+                supertag_scores = self.supertagger.tag_scores(decoder_hidden, current_node)
+                assert supertag_scores.shape == (batch_size, self.supertagger.vocab_size)
+
+                current_supertagger_mask = supertag_mask[:, step + 1]
+                target_supertags = supertags[:, step+1]
+
+                _, argmax = torch.max(supertag_scores, dim=1) # shape (batch_size,)
+                self.supertags_correct += torch.sum(current_supertagger_mask * (target_supertags == argmax)).cpu().numpy()
+                self.supertag_decisions += torch.sum(current_supertagger_mask).cpu().numpy()
+
+                loss = loss - current_supertagger_mask * self.supertag_loss(supertag_scores, target_supertags)
+
+            # Compute lex label loss:
+            if self.lex_label_tagger is not None:
+                lex_label_scores = self.lex_label_tagger.tag_scores(decoder_hidden, current_node)
+                assert lex_label_scores.shape == (batch_size, self.lex_label_tagger.vocab_size)
+
+                current_lex_label_mask = lex_label_mask[:, step + 1]
+                target_lex_labels = lex_labels[:, step+1]
+
+                _, argmax = torch.max(lex_label_scores, dim=1) # shape (batch_size,)
+                self.lex_labels_correct += torch.sum(current_lex_label_mask * (target_lex_labels == argmax)).cpu().numpy()
+                self.lex_label_decisions += torch.sum(current_lex_label_mask).cpu().numpy()
+
+                loss = loss - current_lex_label_mask * self.lex_label_loss(lex_label_scores, target_lex_labels)
 
         return -loss.sum() / batch_size
 
@@ -237,6 +313,12 @@ class TopDownDependencyParser(Model):
 
         self.edge_model.set_input(state["encoded_input"], state["input_mask"])
         self.edge_label_model.set_input(state["encoded_input"], state["input_mask"])
+
+        if self.supertagger is not None:
+            self.supertagger.set_input(state["encoded_input"], state["input_mask"])
+
+        if self.lex_label_tagger is not None:
+            self.lex_label_tagger.set_input(state["encoded_input"], state["input_mask"])
 
         INF = 100
         inverted_input_mask = INF * (1-state["input_mask"])
@@ -276,6 +358,7 @@ class TopDownDependencyParser(Model):
             all_selected_nodes.append(selected_nodes)
 
             #####################
+            additional_choices = dict()
 
             # Compute edge label scores
             edge_label_scores = self.edge_label_model.edge_label_scores(selected_nodes, decoder_hidden)
@@ -284,12 +367,27 @@ class TopDownDependencyParser(Model):
             selected_labels = torch.argmax(edge_label_scores, dim=1)
             assert selected_labels.shape == (batch_size,)
 
-            selected_labels_str = [ self.vocab.get_token_from_index(label_id, namespace=formalism+"_labels") for label_id in selected_labels.cpu().numpy()]
+            additional_choices["selected_labels"] = [ self.vocab.get_token_from_index(label_id, namespace=formalism+"_labels") for label_id in selected_labels.cpu().numpy()]
 
             #####################
 
+            #Compute supertags:
+            if self.supertagger is not None:
+                supertag_scores = self.supertagger.tag_scores(decoder_hidden, next_active_nodes)
+                assert supertag_scores.shape == (batch_size, self.supertagger.vocab_size)
+
+                selected_supertag_tensor = torch.argmax(supertag_scores, dim=1) # shape (batch_size,)
+                additional_choices["selected_supertags"]  = [ self.vocab.get_token_from_index(supertag_id, namespace=formalism+"_supertags") for supertag_id in selected_supertag_tensor.cpu().numpy()]
+
+            if self.lex_label_tagger is not None:
+                lex_label_scores = self.lex_label_tagger.tag_scores(decoder_hidden, next_active_nodes)
+                assert lex_label_scores.shape == (batch_size, self.lex_label_tagger.vocab_size)
+
+                selected_lex_label_tensor = torch.argmax(lex_label_scores, dim=1) # shape (batch_size,)
+                additional_choices["selected_lex_labels"]  = [ self.vocab.get_token_from_index(supertag_id, namespace=formalism+"_lex_labels") for supertag_id in selected_lex_label_tensor.cpu().numpy()]
+
             ### Update current node according to transition system:
-            next_active_nodes, valid_choices = self.transition_system.step(selected_nodes, selected_labels_str)
+            next_active_nodes, valid_choices = self.transition_system.step(selected_nodes, additional_choices)
             assert next_active_nodes.shape == (batch_size,)
             assert valid_choices.shape == (batch_size, input_seq_len)
             valid_choices = valid_choices.to(get_device_id(edge_label_scores))
@@ -304,11 +402,30 @@ class TopDownDependencyParser(Model):
     def get_metrics(self, reset: bool = False) -> Dict[str, float]:
         r = dict()
         if self.decisions > 0:
-            r["unlabeled_head_decisions"] = self.head_decisions_correct / self.decisions * 100
+            r["tf_unlabeled_head_decisions"] = self.head_decisions_correct / self.decisions * 100
+
+        if self.supertag_decisions > 0:
+            r["tf_constant_acc"] = self.supertags_correct / self.supertag_decisions * 100
+
+        if self.sentences_parsed > 0:
+            r["well_typed"] = self.well_typed / self.sentences_parsed * 100
+            r["empty_tree_type"] = self.has_empty_tree_type / self.sentences_parsed * 100
+
+        if self.lex_label_decisions > 0:
+            r["tf_lex_label_acc"] = self.lex_labels_correct / self.lex_label_decisions * 100
 
         if reset:
             self.head_decisions_correct = 0
             self.decisions = 0
+            self.supertags_correct = 0
+            self.supertag_decisions = 0
+            self.lex_labels_correct = 0
+            self.lex_label_decisions = 0
+
+            self.well_typed = 0
+            self.has_empty_tree_type = 0
+            self.sentences_parsed = 0
+
         return r
 
 

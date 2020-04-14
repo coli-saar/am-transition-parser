@@ -2,8 +2,13 @@ from typing import Dict, Any, List
 
 import torch
 from allennlp.common import Registrable
+from allennlp.modules import FeedForward
 from allennlp.nn.util import get_lengths_from_binary_sequence_mask
-from torch.nn import Module
+
+from torch.nn import Module, EmbeddingBag, Dropout, Embedding
+
+from topdown_parser.dataset_readers.AdditionalLexicon import AdditionalLexicon
+from topdown_parser.nn.utils import get_device_id
 
 
 class ContextProvider(Module, Registrable):
@@ -32,6 +37,13 @@ class ContextProvider(Module, Registrable):
         :return:
         """
         raise NotImplementedError()
+
+    # def get_additional_output_dim(self):
+    #     """
+    #     Returns the number of dimensions that is added to the hidden state.
+    #     :return:
+    #     """
+    #     raise NotImplementedError()
 
 
 
@@ -96,10 +108,55 @@ class MostRecent(ContextProvider):
         return current_node + self.compute_context(state, context)
 
 
+def _select(encoded_input : torch.Tensor, siblings : torch.Tensor) -> torch.Tensor:
+    """
+    Returns a tensor of shape (batch_size, max_num_siblings, encoder dim).
+
+    :param encoded_input: shape (batch_size, input_seq_len, encoder dim)
+    :param siblings: shape (batch_size, max_num_siblings)
+    :return:
+    """
+    batch_size, input_seq_len, encoder_dim = encoded_input.shape
+    _, max_num_siblings = siblings.shape
+
+    r = torch.zeros((batch_size, max_num_siblings, encoder_dim), device=get_device_id(encoded_input))
+
+    for b in range(batch_size):
+        r[b] = encoded_input[b,siblings[b]]
+
+    return r
+
+class AllNeighbors(ContextProvider):
+    """
+    Add information about all siblings/children.
+    """
+
+    def __init__(self, context_key : str, mask_key : str):
+        super().__init__()
+        self.context_key = context_key
+        self.mask_key = mask_key
+
+
+    def compute_context(self, state : Dict[str, torch.Tensor], context : Dict[str, torch.Tensor]) -> torch.Tensor:
+        # For the sake of the example, let's say we're looking for siblings
+        siblings = context[self.context_key] #shape (batch_size, max_num_siblings)
+        batch_size, max_num_siblings = siblings.shape
+
+        sibling_mask = context[self.mask_key] # (batch_size, max_num_siblings)
+
+        selected_nodes = _select(state["encoded_input"], siblings) #shape (batch_size, max_num_siblings, encoder_dim)
+
+        return torch.sum(selected_nodes * sibling_mask.unsqueeze(2), dim=1)
+
+    def forward(self, current_node : torch.Tensor, state : Dict[str, torch.Tensor], context : Dict[str, torch.Tensor]) -> torch.Tensor:
+
+        return current_node + self.compute_context(state, context)
+
+
 @ContextProvider.register("most-recent-sibling")
 class SiblingContextProvider(ContextProvider):
     """
-    Add information about most recent sibling, like Ma et al.
+    Add information about most recent sibling.
     """
 
     def __init__(self):
@@ -131,6 +188,23 @@ class SiblingContextProvider(ContextProvider):
 
         return current_node + self.compute_context(state, context)
 
+@ContextProvider.register("all-children")
+class AllChildrenContextProvider(ContextProvider):
+    """
+    Add information about most recent sibling, like Ma et al.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.all_neighbors = AllNeighbors("children", "children_mask")
+
+    def compute_context(self, state : Dict[str, torch.Tensor], context : Dict[str, torch.Tensor]) -> torch.Tensor:
+        return self.all_neighbors.compute_context(state, context)
+
+    def forward(self, current_node : torch.Tensor, state : Dict[str, torch.Tensor], context : Dict[str, torch.Tensor]) -> torch.Tensor:
+
+        return current_node + self.compute_context(state, context)
+
 
 
 @ContextProvider.register("sum")
@@ -142,6 +216,8 @@ class SumContextProver(ContextProvider):
     def __init__(self, providers : List[ContextProvider]):
         super().__init__()
         self.providers = providers
+        for i, p in enumerate(providers):
+            self.add_module("_sum_context_provider_"+str(i), p)
 
     def forward(self, current_node : torch.Tensor, state : Dict[str, torch.Tensor], context : Dict[str, torch.Tensor]) -> torch.Tensor:
         r = current_node
@@ -150,3 +226,69 @@ class SumContextProver(ContextProvider):
             r = r + provider.compute_context(state, context)
 
         return r
+
+
+@ContextProvider.register("concat")
+class ConcatContextProver(ContextProvider):
+    """
+    Concatenate additional information together.
+    """
+
+    def __init__(self, providers : List[ContextProvider], mlp : FeedForward):
+        super().__init__()
+        self.mlp = mlp
+        self.providers = providers
+        for i, p in enumerate(providers):
+            self.add_module("_concat_context_provider_"+str(i), p)
+
+    def forward(self, current_node : torch.Tensor, state : Dict[str, torch.Tensor], context : Dict[str, torch.Tensor]) -> torch.Tensor:
+        contexts = [current_node] #shape (batch_size, some dimension)
+
+        for provider in self.providers:
+            contexts.append(provider.compute_context(state, context))
+
+        return self.mlp(torch.cat(contexts, dim=1))
+
+
+@ContextProvider.register("label-embedder")
+class LabelContextProvider(ContextProvider):
+    """
+    Add information about labels of other children.
+    """
+
+    def __init__(self, additional_lexicon : AdditionalLexicon, hidden_dim : int, dropout : float = 0.0):
+        super().__init__()
+        self.additional_lexicon = additional_lexicon
+        self.embeddings = EmbeddingBag(additional_lexicon.sublexica["edge_labels"].vocab_size(), hidden_dim, mode="sum")
+        self.dropout = Dropout(dropout)
+
+    def compute_context(self, state : Dict[str, torch.Tensor], context : Dict[str, torch.Tensor]) -> torch.Tensor:
+        edge_labels = context["children_labels"] #shape (batch_size, max number of children)
+
+        children_mask = context["children_mask"] # (batch_size, max number of children)
+
+        return self.dropout(self.embeddings(edge_labels, per_sample_weights = children_mask.float()))
+
+    def forward(self, current_node : torch.Tensor, state : Dict[str, torch.Tensor], context : Dict[str, torch.Tensor]) -> torch.Tensor:
+        return current_node + self.compute_context(state, context)
+
+
+@ContextProvider.register("type-embedder")
+class LabelContextProvider(ContextProvider):
+    """
+    Add information about lexical type of current node.
+    """
+
+    def __init__(self, additional_lexicon : AdditionalLexicon, hidden_dim : int, dropout : float = 0.0):
+        super().__init__()
+        self.additional_lexicon = additional_lexicon
+        self.embeddings = Embedding(additional_lexicon.sublexica["lexical_types"].vocab_size(), hidden_dim)
+        self.dropout = Dropout(dropout)
+
+    def compute_context(self, state : Dict[str, torch.Tensor], context : Dict[str, torch.Tensor]) -> torch.Tensor:
+        supertags = context["lexical_types"] #shape (batch_size, )
+
+        return self.dropout(self.embeddings(supertags))
+
+    def forward(self, current_node : torch.Tensor, state : Dict[str, torch.Tensor], context : Dict[str, torch.Tensor]) -> torch.Tensor:
+        return current_node + self.compute_context(state, context)

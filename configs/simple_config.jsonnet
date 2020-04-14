@@ -14,19 +14,29 @@ local encoder_dim = 256;
 
 local dropout_in = 0.33;
 
+local eval_commands = import "eval_commands.libsonnet";
+
+local additional_lexicon = {
+     "sublexica" : {
+            "edge_labels" : "data/AMR/2015/train/edges.txt",
+            "lexical_types" : "data/AMR/2015/train/types.txt"
+     }
+} ;
 
 local transition_system = {
-//    "type" : "dfs-children-first",
+    "type" : "dfs-children-first",
 //    "children_order" : "IO",
 //    "reverse_push_actions" : false
-    "type" : "dfs",
+//    "type" : "dfs",
     "children_order" : "IO",
-    "pop_with_0" : true
+    "pop_with_0" : true,
+    "additional_lexicon" : additional_lexicon,
 };
 
 local dataset_reader = {
                "type": "amconll",
                "transition_system" : transition_system,
+               "workers" : 4,
                "overwrite_formalism" : "amr",
                "token_indexers" : {
                     "tokens" : {
@@ -59,6 +69,8 @@ local data_iterator = {
         "command" : "python topdown_parser/evaluation/am_dep_las.py {gold_file} {system_output}",
 
         "result_regexes" : {
+            "Constant_Acc" : [4, "Supertagging acc % (?P<value>[0-9.]+)"],
+            "Lex_Acc" : [5, "Lexical label acc % (?P<value>[0-9.]+)"],
             "UAS" : [6, "UAS.* % (?P<value>[0-9.]+)"],
             "LAS" : [7, "LAS.* % (?P<value>[0-9.]+)"]
         }
@@ -77,11 +89,42 @@ local data_iterator = {
         "context_provider" : {
             "type" : "sum",
             "providers" : [
-//                {"type" : "parent"},
-//                {"type" : "most-recent-sibling"},
-//                  {"type" : "most-recent-child" }
+//                  {"type" : "type-embedder", "hidden_dim" : 2*encoder_dim, "additional_lexicon" : additional_lexicon }
+                  {"type" : "most-recent-child" }
+
+                {"type" : "label-embedder",
+                    "additional_lexicon" : additional_lexicon,
+                    "hidden_dim" : 2*encoder_dim,
+                    "dropout" : 0.2
+                }
             ]
         },
+
+//        "supertagger" : {
+//            "type" : "simple-tagger",
+//            "formalism" : "amr",
+//            "suffix_namespace" : "supertags",
+//            "mlp" : {
+//                "input_dim" : 2*encoder_dim,
+//                "num_layers" : 1,
+//                "hidden_dims" : 1024,
+//                "dropout" : 0.0,
+//                "activations" : "tanh",
+//            }
+//        },
+//
+//        "lex_label_tagger" : {
+//            "type" : "simple-tagger",
+//            "formalism" : "amr",
+//            "suffix_namespace" : "lex_labels",
+//            "mlp" : {
+//                "input_dim" : 2*encoder_dim,
+//                "num_layers" : 1,
+//                "hidden_dims" : 1024,
+//                "dropout" : 0.0,
+//                "activations" : "tanh",
+//            }
+//        },
 
         "encoder" : {
             "type" : "lstm",
@@ -136,9 +179,11 @@ local data_iterator = {
 //            "activation" : "elu"
         },
         "edge_label_model" : {
+            #"type" : "ma",
             "type" : "simple",
             "formalism" : "amr",
             "mlp" : {
+                #"input_dim" : 2*encoder_dim,
                 "input_dim" : 2*2*encoder_dim,
                 "num_layers" : 1,
                 "hidden_dims" : [256],
@@ -182,6 +227,8 @@ local data_iterator = {
         "dataset_writer":{
               "type":"amconll_writer"
         }
-    }
+    },
+
+//    "callbacks" : eval_commands["AMR-2015"]
 }
 

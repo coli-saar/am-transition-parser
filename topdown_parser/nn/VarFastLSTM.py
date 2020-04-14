@@ -31,14 +31,6 @@ def VarFastLSTMCellF(input, hidden, w_ih, w_hh, b_ih=None, b_hh=None, noise_in=N
     return hy, cy
 
 class VarRNNCellBase(nn.Module):
-    def __repr__(self):
-        s = '{name}({model_dim}, {hidden_size}'
-        if 'bias' in self.__dict__ and self.bias is not True:
-            s += ', bias={bias}'
-        if 'nonlinearity' in self.__dict__ and self.nonlinearity != "tanh":
-            s += ', nonlinearity={nonlinearity}'
-        s += ')'
-        return s.format(name=self.__class__.__name__, **self.__dict__)
 
     def reset_noise(self, batch_size):
         """

@@ -4,6 +4,7 @@ from typing import List, Iterable, Optional, Tuple, Dict, Any, Set
 import torch
 
 from topdown_parser.am_algebra.tree import Tree
+from topdown_parser.dataset_readers.AdditionalLexicon import AdditionalLexicon
 from topdown_parser.dataset_readers.amconll_tools import AMSentence
 from topdown_parser.nn.utils import get_device_id
 from topdown_parser.transition_systems.transition_system import TransitionSystem, Decision, get_parent, get_siblings
@@ -17,12 +18,14 @@ class DFSChildrenFirst(TransitionSystem):
     Afterwards, the first child is visited for the second time. Then the second child etc.
     """
 
-    def __init__(self, children_order: str, pop_with_0 : bool, reverse_push_actions : bool = False):
+    def __init__(self, children_order: str, pop_with_0: bool, reverse_push_actions: bool = False,
+                 additional_lexicon: Optional[AdditionalLexicon] = None):
         """
         Select children_order : "LR" (left to right) or "IO" (inside-out, recommended by Ma et al.)
         reverse_push_actions means that the order of push actions is the opposite order in which the children of
         the node are recursively visited.
         """
+        super().__init__(additional_lexicon)
         self.pop_with_0 = pop_with_0
         self.reverse_push_actions = reverse_push_actions
         assert children_order in ["LR", "IO", "RL"], "unknown children order"
@@ -58,14 +61,14 @@ class DFSChildrenFirst(TransitionSystem):
             recursive_actions.extend(self._construct_seq(child))
 
         if self.pop_with_0:
-            ending = [Decision(0, "", (tree.node[1].fragment, tree.node[1].typ), tree.node[1].lexlabel)]
+            relevant_position = 0
         else:
-            ending = [Decision(own_position, "", (tree.node[1].fragment, tree.node[1].typ), tree.node[1].lexlabel)]
+            relevant_position = own_position
 
         if self.reverse_push_actions:
             push_actions = list(reversed(push_actions))
 
-        return push_actions + ending + recursive_actions
+        return push_actions + [Decision(relevant_position, "", (tree.node[1].fragment, tree.node[1].typ), tree.node[1].lexlabel)] + recursive_actions
 
     def get_order(self, sentence: AMSentence) -> Iterable[Decision]:
         t = Tree.from_am_sentence(sentence)
@@ -81,13 +84,18 @@ class DFSChildrenFirst(TransitionSystem):
         self.heads = [[0 for _ in range(len(sentence.words))] for sentence in sentences]
         self.children = [{i: [] for i in range(len(sentence.words) + 1)} for sentence in sentences]  # 1-based
         self.labels = [["IGNORE" for _ in range(len(sentence.words))] for sentence in sentences]
+        self.lex_labels = [["_" for _ in range(len(sentence.words))] for sentence in sentences]
+        self.supertags = [["_--TYPE--_" for _ in range(len(sentence.words))] for sentence in sentences]
         self.sentences = sentences
 
-    def step(self, selected_nodes: torch.Tensor, selected_labels: List[str]) -> Tuple[torch.Tensor, torch.Tensor]:
+    def step(self, selected_nodes: torch.Tensor, additional_choices : Dict[str, List[str]]) -> Tuple[torch.Tensor, torch.Tensor]:
         device = get_device_id(selected_nodes)
         assert selected_nodes.shape == (self.batch_size,)
 
         selected_nodes = selected_nodes.cpu().numpy()
+        selected_labels = additional_choices["selected_labels"]
+        selected_supertags = additional_choices.get("selected_supertags", None)
+        selected_lex_labels = additional_choices.get("selected_lex_labels", None)
 
         r = []
         next_choices = []
@@ -101,6 +109,12 @@ class DFSChildrenFirst(TransitionSystem):
 
                     if not self.pop_with_0:
                         assert popped == selected_nodes[i]
+
+                    if selected_supertags is not None:
+                        self.supertags[i][popped-1] = selected_supertags[i]
+
+                    if selected_lex_labels is not None:
+                        self.lex_labels[i][popped-1] = selected_lex_labels[i]
 
                     if self.reverse_push_actions:
                         self.stack[i].extend(self.sub_stack[i])
@@ -145,6 +159,8 @@ class DFSChildrenFirst(TransitionSystem):
 
         sentences = [sentence.set_heads(self.heads[i]) for i, sentence in enumerate(self.sentences)]
         sentences = [sentence.set_labels(self.labels[i]) for i, sentence in enumerate(sentences)]
+        sentences = [sentence.set_supertags(self.supertags[i]) for i, sentence in enumerate(sentences)]
+        sentences = [sentence.set_lexlabels(self.lex_labels[i]) for i, sentence in enumerate(sentences)]
 
         self.sentences = None
         self.stack = None
@@ -152,6 +168,8 @@ class DFSChildrenFirst(TransitionSystem):
         self.seen = None
         self.heads = None
         self.batch_size = None
+        self.supertags = None
+        self.lex_labels = None
 
         return sentences
 
@@ -161,4 +179,4 @@ class DFSChildrenFirst(TransitionSystem):
         :param active_nodes: tensor of shape (batch_size,) with nodes that are currently on top of the stack.
         :return:
         """
-        return super()._gather_context(active_nodes, self.batch_size, self.heads, self.children)
+        return super()._gather_context(active_nodes, self.batch_size, self.heads, self.children, self.labels)

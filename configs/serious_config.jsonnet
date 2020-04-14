@@ -1,4 +1,3 @@
-
 local num_epochs = 100;
 local device = 0;
 
@@ -6,14 +5,16 @@ local word_dim = 200;
 local pos_embedding = 32;
 
 local encoder_dim = 512;
-local batch_size = 4;
+local batch_size = 64;
 
 local char_dim = 100;
 local num_filters = 50;
 local filters = [3];
 local max_filter = 3; //KEEP IN SYNC WITH filters!
 
-local dropout_in = 0.33;
+
+local glove_dir = "/local/mlinde/glove/";
+
 
 local eval_commands = import "eval_commands.libsonnet";
 
@@ -24,9 +25,9 @@ local additional_lexicon = {
      }
 } ;
 
-
 local transition_system = {
     "type" : "dfs",
+//    "type" : "dfs-children-first",
     "children_order" : "IO",
     "pop_with_0" : true,
     "additional_lexicon" : additional_lexicon,
@@ -37,6 +38,7 @@ local formalism = "amr";
 local dataset_reader = {
                "type": "amconll",
                "transition_system" : transition_system,
+               "workers" : 4,
                "overwrite_formalism" : formalism,
 
               "token_indexers" : {
@@ -100,31 +102,31 @@ local data_iterator = {
         "input_dropout" : 0.33,
         "encoder_output_dropout" : 0.33,
 
-                "supertagger" : {
-                    "type" : "simple-tagger",
-                    "formalism" : "amr",
-                    "suffix_namespace" : "supertags",
-                    "mlp" : {
-                        "input_dim" : 2*encoder_dim,
-                        "num_layers" : 1,
-                        "hidden_dims" : 1024,
-                        "dropout" : 0.4,
-                        "activations" : "tanh",
-                    }
-                },
+            "supertagger" : {
+                "type" : "simple-tagger",
+                "formalism" : "amr",
+                "suffix_namespace" : "supertags",
+                "mlp" : {
+                    "input_dim" : 2*encoder_dim,
+                    "num_layers" : 1,
+                    "hidden_dims" : 1024,
+                    "dropout" : 0.4,
+                    "activations" : "tanh",
+                }
+            },
 
-                "lex_label_tagger" : {
-                    "type" : "simple-tagger",
-                    "formalism" : "amr",
-                    "suffix_namespace" : "lex_labels",
-                    "mlp" : {
-                        "input_dim" : 2*encoder_dim,
-                        "num_layers" : 1,
-                        "hidden_dims" : 1024,
-                        "dropout" : 0.4,
-                        "activations" : "tanh",
-                    }
-                },
+            "lex_label_tagger" : {
+                "type" : "simple-tagger",
+                "formalism" : "amr",
+                "suffix_namespace" : "lex_labels",
+                "mlp" : {
+                    "input_dim" : 2*encoder_dim,
+                    "num_layers" : 1,
+                    "hidden_dims" : 1024,
+                    "dropout" : 0.4,
+                    "activations" : "tanh",
+                }
+            },
 
         "encoder" : {
              "type": "stacked_bidirectional_lstm",
@@ -144,7 +146,8 @@ local data_iterator = {
         "text_field_embedder": {
                "tokens": {
                     "type": "embedding",
-                    "embedding_dim": word_dim
+                    "embedding_dim": word_dim,
+                    "pretrained_file": glove_dir+"glove.6B.200d.txt"
                 },
                 "token_characters": {
                   "type": "character_encoding",
@@ -161,9 +164,6 @@ local data_iterator = {
         },
 
         "edge_model" : {
-//            "type" : "mlp",
-//            "encoder_dim" : 2*encoder_dim,
-//            "hidden_dim" : 512,
             "type" : "ma",
             "mlp" : {
                     "input_dim" : 2*encoder_dim,
@@ -196,7 +196,7 @@ local data_iterator = {
         }
 
     },
-    "train_data_path": "data/AMR/2015/train/small.amconll",
+    "train_data_path": "data/AMR/2015/train/train.amconll",
     "validation_data_path": "data/AMR/2015/gold-dev/gold-dev.amconll",
 
     "evaluate_on_test" : false,
@@ -226,4 +226,3 @@ local data_iterator = {
 
     "callbacks" : eval_commands["AMR-2015"]
 }
-
