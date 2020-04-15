@@ -137,3 +137,25 @@ class GRUCellWrapper(DecoderCell):
 
     def get_hidden_state(self) -> torch.Tensor:
         return self.hidden
+
+
+@DecoderCell.register("identity")
+class IdentityCell(DecoderCell):
+    """
+    Always return what you receive as input.
+    """
+
+    def __init__(self, input_dim: int, hidden_dim: int):
+        super().__init__(input_dim, hidden_dim)
+
+    def reset_cell(self, batch_size : int, device : Optional[int] = None) -> None:
+        pass
+
+    def set_hidden_state(self, hidden_state : torch.Tensor) -> None:
+        pass
+
+    def step(self, input : torch.Tensor) -> None:
+        self.input = input
+
+    def get_hidden_state(self) -> torch.Tensor:
+        return self.input

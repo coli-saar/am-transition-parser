@@ -54,3 +54,45 @@ class SimpleTagger(Supertagger):
         #relevant_tokens = self.encoded_input[range(batch_size), active_node] #shape (batch_size, encoder dim)
 
         return self.output_layer(self.mlp(decoder))
+
+
+@Supertagger.register("combined-tagger")
+class CombinedTagger(Supertagger):
+
+    def __init__(self, vocab: Vocabulary, formalism: str, suffix_namespace: str, mlp : FeedForward):
+        super().__init__(vocab, formalism, suffix_namespace)
+
+        self.mlp = mlp
+        self.output_layer = nn.Linear(mlp.get_output_dim(), self.vocab_size)
+
+    def set_input(self, encoded_input: torch.Tensor, mask: torch.Tensor) -> None:
+        self.encoded_input = encoded_input
+        self.mask = mask
+
+    def tag_scores(self, decoder: torch.Tensor, active_node : torch.Tensor) -> torch.Tensor:
+        batch_size = active_node.shape[0]
+
+        #Find embeddings of active nodes.
+        relevant_tokens = self.encoded_input[range(batch_size), active_node] #shape (batch_size, encoder dim)
+
+        return self.output_layer(self.mlp(torch.cat([decoder, relevant_tokens], dim=1)))
+
+
+@Supertagger.register("no-decoder-tagger")
+class CombinedTagger(Supertagger):
+
+    def __init__(self, vocab: Vocabulary, formalism: str, suffix_namespace: str, mlp : FeedForward):
+        super().__init__(vocab, formalism, suffix_namespace)
+
+        self.mlp = mlp
+        self.output_layer = nn.Linear(mlp.get_output_dim(), self.vocab_size)
+
+    def set_input(self, encoded_input: torch.Tensor, mask: torch.Tensor) -> None:
+        self.encoded_input = self.output_layer(self.mlp(encoded_input))
+        self.mask = mask
+
+    def tag_scores(self, decoder: torch.Tensor, active_node : torch.Tensor) -> torch.Tensor:
+        batch_size = active_node.shape[0]
+
+        #Find embeddings of active nodes.
+        return self.encoded_input[range(batch_size), active_node] #shape (batch_size, encoder dim)

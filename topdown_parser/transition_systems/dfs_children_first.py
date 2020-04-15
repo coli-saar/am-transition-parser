@@ -32,6 +32,9 @@ class DFSChildrenFirst(TransitionSystem):
 
         self.children_order = children_order
 
+    def predict_supertag_from_tos(self) -> bool:
+        return True
+
     def _construct_seq(self, tree: Tree) -> List[Decision]:
         own_position = tree.node[0]
         push_actions = []

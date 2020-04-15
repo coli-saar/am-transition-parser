@@ -103,7 +103,8 @@ local data_iterator = {
         "encoder_output_dropout" : 0.33,
 
             "supertagger" : {
-                "type" : "simple-tagger",
+//                "type" : "simple-tagger",
+                "type" : "no-decoder-tagger",
                 "formalism" : "amr",
                 "suffix_namespace" : "supertags",
                 "mlp" : {
@@ -116,7 +117,8 @@ local data_iterator = {
             },
 
             "lex_label_tagger" : {
-                "type" : "simple-tagger",
+//                "type" : "simple-tagger",
+                "type" : "no-decoder-tagger",
                 "formalism" : "amr",
                 "suffix_namespace" : "lex_labels",
                 "mlp" : {
@@ -136,6 +138,16 @@ local data_iterator = {
             "recurrent_dropout_probability" : 0.33,
             "layer_dropout_probability" : 0.33
         },
+
+        "tagger_encoder" : {
+             "type": "stacked_bidirectional_lstm",
+            "input_size": num_filters + word_dim + pos_embedding,
+            "hidden_size": encoder_dim,
+            "num_layers" : 2,
+            "recurrent_dropout_probability" : 0.33,
+            "layer_dropout_probability" : 0.33
+        },
+
         "decoder" : {
             "type" : "ma-lstm",
             "input_dim": 2*encoder_dim,

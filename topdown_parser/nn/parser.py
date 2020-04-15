@@ -1,4 +1,4 @@
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Tuple
 
 import torch
 from allennlp.common.checks import ConfigurationError
@@ -30,9 +30,12 @@ class TopDownDependencyParser(Model):
                  edge_label_model: EdgeLabelModel,
                  transition_system : TransitionSystem,
                  edge_loss : EdgeExistenceLoss,
+                 tagger_encoder : Optional[Seq2SeqEncoder] = None,
+                 tagger_decoder : Optional[DecoderCell] = None,
                  supertagger : Optional[Supertagger] = None,
                  lex_label_tagger : Optional[Supertagger] = None,
                  context_provider : Optional[ContextProvider] = None,
+                 tagger_context_provider : Optional[ContextProvider] = None,
                  pos_tag_embedding: Embedding = None,
                  lemma_embedding: Embedding = None,
                  ne_embedding: Embedding = None,
@@ -40,6 +43,9 @@ class TopDownDependencyParser(Model):
                  encoder_output_dropout : float = 0.0
                  ):
         super().__init__(vocab)
+        self.tagger_context_provider = tagger_context_provider
+        self.tagger_decoder = tagger_decoder
+        self.tagger_encoder = tagger_encoder
         self.lex_label_tagger = lex_label_tagger
         self.supertagger = supertagger
         self.edge_loss = edge_loss
@@ -62,6 +68,7 @@ class TopDownDependencyParser(Model):
         self.decoder_output_dim = self.encoder_output_dim
 
         self._head_sentinel = torch.nn.Parameter(torch.randn([1, 1, self.encoder_output_dim]), requires_grad=True)
+        self._head_sentinel_tagging = torch.nn.Parameter(torch.randn([1, 1, self.encoder_output_dim if tagger_encoder is None else self.tagger_encoder.get_output_dim()]), requires_grad=True)
 
         self.head_decisions_correct = 0
         self.decisions = 0
@@ -99,9 +106,7 @@ class TopDownDependencyParser(Model):
         state = self.encode(words, pos_tags, lemmas, ner_tags)  # shape (batch_size, seq_len, encoder_dim)
 
         # Initialize decoder
-        self.decoder.reset_cell(batch_size, get_device_id(pos_tags))
-        self.decoder.set_hidden_state(
-            get_final_encoder_states(state["encoded_input"], state["input_mask"], self.encoder.is_bidirectional()))
+        self.init_decoder(state)
 
         sentences = [ m["am_sentence"] for m in metadata]
         ret = {}
@@ -111,9 +116,7 @@ class TopDownDependencyParser(Model):
         if not self.training:
             if "loss" in ret:
                 #Reset decoder!
-                self.decoder.reset_cell(batch_size, get_device_id(pos_tags))
-                self.decoder.set_hidden_state(
-                    get_final_encoder_states(state["encoded_input"], state["input_mask"], self.encoder.is_bidirectional()))
+                self.init_decoder(state)
 
             sentences = [s.strip_annotation() for s in sentences]
             predictions = self.parse_sentences(state, metadata[0]["formalism"], sentences)
@@ -130,6 +133,45 @@ class TopDownDependencyParser(Model):
             ret["predictions"] = predictions
 
         return ret
+
+    def init_decoder(self, state : Dict[str, torch.Tensor]):
+        batch_size = state["encoded_input"].shape[0]
+        device = get_device_id(state["encoded_input"])
+        self.decoder.reset_cell(batch_size, device)
+        self.decoder.set_hidden_state(
+            get_final_encoder_states(state["encoded_input"], state["input_mask"], self.encoder.is_bidirectional()))
+
+        if self.tagger_decoder is not None:
+            self.tagger_decoder.reset_cell(batch_size, device)
+            self.tagger_decoder.set_hidden_state(
+                get_final_encoder_states(state["encoded_input_for_tagging"], state["input_mask"], self.encoder.is_bidirectional()))
+
+    def decoder_step(self, state : Dict[str, torch.Tensor],
+                     encoding_current_node : torch.Tensor, encoding_current_node_tagging : torch.Tensor,
+                     current_context : Dict[str, torch.Tensor]) \
+            -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Advances the decoder(s).
+        :param state:
+        :param encoding_current_node:
+        :param current_context:
+        :return:
+        """
+        if self.context_provider:
+            encoding_current_node = self.context_provider.forward(encoding_current_node, state, current_context)
+
+        self.decoder.step(encoding_current_node)
+        decoder_hidden = self.decoder.get_hidden_state()
+
+        if self.tagger_decoder is None:
+            return decoder_hidden, decoder_hidden
+
+        if self.tagger_context_provider:
+            encoding_current_node_tagging = self.tagger_context_provider.forward(encoding_current_node, state, current_context)
+
+        self.tagger_decoder.step(encoding_current_node_tagging)
+
+        return decoder_hidden, self.tagger_decoder.get_hidden_state()
 
     def encode(self, words: Dict[str, torch.Tensor],
                pos_tags: torch.LongTensor,
@@ -167,7 +209,15 @@ class TopDownDependencyParser(Model):
                          dim=1)
         assert mask.shape == (batch_size, seq_len + 1)
 
-        return {"encoded_input": encoded_text, "input_mask": mask}
+        if self.tagger_encoder is not None:
+            tagger_encoded = self.tagger_encoder(embedded_text_input, get_text_field_mask(words)) # shape (batch_size, seq_len, tagger encoder dim)
+            head_sentinel_tagging = self._head_sentinel_tagging.expand(batch_size, 1, tagger_encoded.shape[2])
+            tagger_encoded = torch.cat([head_sentinel_tagging, tagger_encoded], 1)
+            tagger_encoded = self._encoder_output_dropout(tagger_encoded)
+        else:
+            tagger_encoded = encoded_text
+
+        return {"encoded_input": encoded_text, "input_mask": mask, "encoded_input_for_tagging" : tagger_encoded}
 
     def compute_loss(self, state: Dict[str, torch.Tensor], seq: torch.Tensor, active_nodes : torch.Tensor,
                      labels: torch.Tensor, label_mask: torch.Tensor,
@@ -200,10 +250,10 @@ class TopDownDependencyParser(Model):
         bool_supertag_mask = supertag_mask.bool()
 
         if self.supertagger is not None:
-            self.supertagger.set_input(state["encoded_input"], state["input_mask"])
+            self.supertagger.set_input(state["encoded_input_for_tagging"], state["input_mask"])
 
         if self.lex_label_tagger is not None:
-            self.lex_label_tagger.set_input(state["encoded_input"], state["input_mask"])
+            self.lex_label_tagger.set_input(state["encoded_input_for_tagging"], state["input_mask"])
 
         loss = torch.zeros(batch_size, device=get_device_id(seq))
 
@@ -222,14 +272,23 @@ class TopDownDependencyParser(Model):
             assert current_node.shape == (batch_size,)
 
             encoding_current_node = state["encoded_input"][range(batch_size), current_node]
+            encoding_current_node_tagging = state["encoded_input_for_tagging"][range(batch_size), current_node]
 
             if self.context_provider:
                 # Generate context snapshot of current time-step.
                 current_context = { feature_name : tensor[:, step] for feature_name, tensor in context.items()}
-                encoding_current_node = self.context_provider.forward(encoding_current_node, state, current_context)
+            else:
+                current_context = dict()
 
-            self.decoder.step(encoding_current_node)
-            decoder_hidden = self.decoder.get_hidden_state()
+            decoder_hidden, decoder_hidden_tagging = self.decoder_step(state, encoding_current_node, encoding_current_node_tagging, current_context)
+
+            # if self.context_provider:
+            #     # Generate context snapshot of current time-step.
+            #     current_context = { feature_name : tensor[:, step] for feature_name, tensor in context.items()}
+            #     encoding_current_node = self.context_provider.forward(encoding_current_node, state, current_context)
+            #
+            # self.decoder.step(encoding_current_node)
+            # decoder_hidden = self.decoder.get_hidden_state()
             assert decoder_hidden.shape == (batch_size, self.decoder_output_dim)
             decoder_hidden = decoder_hidden * dropout_mask
 
@@ -270,10 +329,14 @@ class TopDownDependencyParser(Model):
                 #loss = loss + label_mask[:, step + 1] * F.nll_loss(edge_label_scores, gold_labels, reduction="none")
 
             #####################
+            if self.transition_system.predict_supertag_from_tos():
+                relevant_nodes_for_supertagging = current_node
+            else:
+                relevant_nodes_for_supertagging = target_gold_edges
 
             # Compute supertagging loss
             if self.supertagger is not None and torch.any(bool_supertag_mask[:, step+1]):
-                supertag_scores = self.supertagger.tag_scores(decoder_hidden, current_node)
+                supertag_scores = self.supertagger.tag_scores(decoder_hidden_tagging, relevant_nodes_for_supertagging)
                 assert supertag_scores.shape == (batch_size, self.supertagger.vocab_size)
 
                 current_supertagger_mask = supertag_mask[:, step + 1]
@@ -287,7 +350,7 @@ class TopDownDependencyParser(Model):
 
             # Compute lex label loss:
             if self.lex_label_tagger is not None:
-                lex_label_scores = self.lex_label_tagger.tag_scores(decoder_hidden, current_node)
+                lex_label_scores = self.lex_label_tagger.tag_scores(decoder_hidden_tagging, relevant_nodes_for_supertagging)
                 assert lex_label_scores.shape == (batch_size, self.lex_label_tagger.vocab_size)
 
                 current_lex_label_mask = lex_label_mask[:, step + 1]
@@ -315,10 +378,10 @@ class TopDownDependencyParser(Model):
         self.edge_label_model.set_input(state["encoded_input"], state["input_mask"])
 
         if self.supertagger is not None:
-            self.supertagger.set_input(state["encoded_input"], state["input_mask"])
+            self.supertagger.set_input(state["encoded_input_for_tagging"], state["input_mask"])
 
         if self.lex_label_tagger is not None:
-            self.lex_label_tagger.set_input(state["encoded_input"], state["input_mask"])
+            self.lex_label_tagger.set_input(state["encoded_input_for_tagging"], state["input_mask"])
 
         INF = 100
         inverted_input_mask = INF * (1-state["input_mask"])
@@ -334,15 +397,24 @@ class TopDownDependencyParser(Model):
 
         for step in range(output_seq_len):
             encoding_current_node = state["encoded_input"][range(batch_size), next_active_nodes]
+            encoding_current_node_tagging = state["encoded_input_for_tagging"][range(batch_size), next_active_nodes]
+
+            if self.context_provider:
+                # Generate context snapshot of current time-step.
+                current_context = self.transition_system.gather_context(next_active_nodes)
+            else:
+                current_context = dict()
+
+            decoder_hidden, decoder_hidden_tagging = self.decoder_step(state, encoding_current_node, encoding_current_node_tagging, current_context)
 
             # Feed current node to decoder
-            if self.context_provider:
-                # Generate context snapshot
-                current_context = self.transition_system.gather_context(next_active_nodes)
-                encoding_current_node = self.context_provider.forward(encoding_current_node, state, current_context)
-
-            self.decoder.step(encoding_current_node)
-            decoder_hidden = self.decoder.get_hidden_state()
+            # if self.context_provider:
+            #     # Generate context snapshot
+            #     current_context = self.transition_system.gather_context(next_active_nodes)
+            #     encoding_current_node = self.context_provider.forward(encoding_current_node, state, current_context)
+            #
+            # self.decoder.step(encoding_current_node)
+            # decoder_hidden = self.decoder.get_hidden_state()
             assert decoder_hidden.shape == (batch_size, self.decoder_output_dim)
 
             #####################
@@ -370,17 +442,21 @@ class TopDownDependencyParser(Model):
             additional_choices["selected_labels"] = [ self.vocab.get_token_from_index(label_id, namespace=formalism+"_labels") for label_id in selected_labels.cpu().numpy()]
 
             #####################
+            if self.transition_system.predict_supertag_from_tos():
+                relevant_nodes_for_supertagging = next_active_nodes
+            else:
+                relevant_nodes_for_supertagging = selected_nodes
 
             #Compute supertags:
             if self.supertagger is not None:
-                supertag_scores = self.supertagger.tag_scores(decoder_hidden, next_active_nodes)
+                supertag_scores = self.supertagger.tag_scores(decoder_hidden_tagging, relevant_nodes_for_supertagging)
                 assert supertag_scores.shape == (batch_size, self.supertagger.vocab_size)
 
                 selected_supertag_tensor = torch.argmax(supertag_scores, dim=1) # shape (batch_size,)
                 additional_choices["selected_supertags"]  = [ self.vocab.get_token_from_index(supertag_id, namespace=formalism+"_supertags") for supertag_id in selected_supertag_tensor.cpu().numpy()]
 
             if self.lex_label_tagger is not None:
-                lex_label_scores = self.lex_label_tagger.tag_scores(decoder_hidden, next_active_nodes)
+                lex_label_scores = self.lex_label_tagger.tag_scores(decoder_hidden_tagging, relevant_nodes_for_supertagging)
                 assert lex_label_scores.shape == (batch_size, self.lex_label_tagger.vocab_size)
 
                 selected_lex_label_tensor = torch.argmax(lex_label_scores, dim=1) # shape (batch_size,)

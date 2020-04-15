@@ -99,7 +99,7 @@ for id in intersection:
             if gold_w.label == system_w.label:
                 labels_and_heads_correct += 1
                 
-        if gold_w.lex_label == system_w.lex_label:
+        if gold_w.lex_label == system_w.lex_label or (gold_w.lex_label == "_" and system_w.label == "IGNORE"): # ignored word
             lex_labels_correct += 1
 
 

@@ -52,6 +52,14 @@ class TransitionSystem(Registrable):
         """
         raise NotImplementedError()
 
+    def predict_supertag_from_tos(self) -> bool:
+        """
+        shall we try to predict the supertag using the encoding of the nodes on top of the stack? (dfs-children-first)
+        or shall we try to predict it from the nodes just selected? (dfs)
+        :return:
+        """
+        raise NotImplementedError()
+
     def retrieve_parses(self) -> List[AMSentence]:
         """
         Called after several calls to step.
