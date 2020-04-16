@@ -12,6 +12,7 @@ local pos_embedding = 32;
 
 local encoder_dim = 256;
 
+
 local dropout_in = 0.33;
 
 local eval_commands = import "eval_commands.libsonnet";
@@ -72,7 +73,8 @@ local data_iterator = {
             "Constant_Acc" : [4, "Supertagging acc % (?P<value>[0-9.]+)"],
             "Lex_Acc" : [5, "Lexical label acc % (?P<value>[0-9.]+)"],
             "UAS" : [6, "UAS.* % (?P<value>[0-9.]+)"],
-            "LAS" : [7, "LAS.* % (?P<value>[0-9.]+)"]
+            "LAS" : [7, "LAS.* % (?P<value>[0-9.]+)"],
+            "Content_recall" : [8, "Content recall % (?P<value>[0-9.]+)"]
         }
     },
 
@@ -91,40 +93,44 @@ local data_iterator = {
             "providers" : [
 //                  {"type" : "type-embedder", "hidden_dim" : 2*encoder_dim, "additional_lexicon" : additional_lexicon }
                   {"type" : "most-recent-child" }
-
-                {"type" : "label-embedder",
-                    "additional_lexicon" : additional_lexicon,
-                    "hidden_dim" : 2*encoder_dim,
-                    "dropout" : 0.2
-                }
             ]
         },
 
-//        "supertagger" : {
-//            "type" : "simple-tagger",
-//            "formalism" : "amr",
-//            "suffix_namespace" : "supertags",
-//            "mlp" : {
-//                "input_dim" : 2*encoder_dim,
-//                "num_layers" : 1,
-//                "hidden_dims" : 1024,
-//                "dropout" : 0.0,
-//                "activations" : "tanh",
-//            }
+//        "tagger_context_provider" :{ "type" : "label-embedder",
+//                                "additional_lexicon" : additional_lexicon,
+//                                "hidden_dim" : 2*encoder_dim,
+//                                "dropout" : 0.2
 //        },
-//
-//        "lex_label_tagger" : {
-//            "type" : "simple-tagger",
-//            "formalism" : "amr",
-//            "suffix_namespace" : "lex_labels",
-//            "mlp" : {
+
+        "supertagger" : {
+            "type" : "combined-tagger",
+//            "type" : "no-decoder-tagger",
+            "formalism" : "amr",
+            "suffix_namespace" : "supertags",
+            "mlp" : {
+                "input_dim" : 2*2*encoder_dim,
 //                "input_dim" : 2*encoder_dim,
-//                "num_layers" : 1,
-//                "hidden_dims" : 1024,
-//                "dropout" : 0.0,
-//                "activations" : "tanh",
-//            }
-//        },
+                "num_layers" : 1,
+                "hidden_dims" : 1024,
+                "dropout" : 0.0,
+                "activations" : "tanh",
+            }
+        },
+
+        "lex_label_tagger" : {
+            "type" : "combined-tagger",
+//            "type" : "no-decoder-tagger",
+            "formalism" : "amr",
+            "suffix_namespace" : "lex_labels",
+            "mlp" : {
+                "input_dim" : 2*2*encoder_dim,
+//                "input_dim" : 2*encoder_dim,
+                "num_layers" : 1,
+                "hidden_dims" : 1024,
+                "dropout" : 0.0,
+                "activations" : "tanh",
+            }
+        },
 
         "encoder" : {
             "type" : "lstm",
@@ -132,6 +138,21 @@ local data_iterator = {
             "hidden_size" : encoder_dim,
             "bidirectional" : true,
         },
+
+
+        "tagger_encoder" : {
+            "type" : "lstm",
+            "input_size" :  num_filters + word_dim + pos_embedding,
+            "hidden_size" : encoder_dim,
+            "bidirectional" : true,
+        },
+
+//        "tagger_decoder" : {
+//            "type" : "identity",
+//            "input_dim": 2*encoder_dim,
+//            "hidden_dim" : 2*encoder_dim,
+//        },
+
         "decoder" : {
             "type" : "ma-lstm",
             "input_dim": 2*encoder_dim,

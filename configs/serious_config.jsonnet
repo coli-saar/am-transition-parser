@@ -74,7 +74,8 @@ local data_iterator = {
             "Constant_Acc" : [4, "Supertagging acc % (?P<value>[0-9.]+)"],
             "Lex_Acc" : [5, "Lexical label acc % (?P<value>[0-9.]+)"],
             "UAS" : [6, "UAS.* % (?P<value>[0-9.]+)"],
-            "LAS" : [7, "LAS.* % (?P<value>[0-9.]+)"]
+            "LAS" : [7, "LAS.* % (?P<value>[0-9.]+)"],
+            "Content_recall" : [8, "Content recall % (?P<value>[0-9.]+)"]
         }
     },
 
