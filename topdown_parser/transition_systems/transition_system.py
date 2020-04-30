@@ -191,7 +191,7 @@ class TransitionSystem(Registrable):
                 ret["children_labels"] = label_tensor
                 #mask is children_mask
 
-            if "lexical_types" in self.additional_lexicon.sublexica and supertags is not None:
+            if "term_types" in self.additional_lexicon.sublexica and supertags is not None:
                 supertag_tensor = torch.tensor([self.additional_lexicon.get_id("term_types", t) for t in supertags_of_current_node], dtype=torch.long, device=device) #shape (batch_size,)
                 ret["lexical_types"] = supertag_tensor
 

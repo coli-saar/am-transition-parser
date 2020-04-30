@@ -6,8 +6,8 @@ from typing import List, Iterable, Optional, Tuple, Dict, Any, Set
 import torch
 
 from topdown_parser.am_algebra import AMType, NonAMTypeException, new_amtypes
-from topdown_parser.am_algebra.new_amtypes import CandidateLexType
-from topdown_parser.am_algebra.tools import get_term_types, SubtypeCache
+from topdown_parser.am_algebra.new_amtypes import CandidateLexType, ModCache
+from topdown_parser.am_algebra.tools import get_term_types
 from topdown_parser.am_algebra.tree import Tree
 from topdown_parser.dataset_readers.AdditionalLexicon import AdditionalLexicon
 from topdown_parser.dataset_readers.amconll_tools import AMSentence
@@ -63,7 +63,8 @@ class LTF(TransitionSystem):
 
         self.candidate_lex_types = new_amtypes.CandidateLexType({typ for typ in self.typ2i.keys()})
 
-        self.subtype_cache = SubtypeCache(self.typ2i.keys())
+        #self.subtype_cache = SubtypeCache(self.typ2i.keys())
+        self.mod_cache = ModCache(self.typ2i.keys())
 
         self.sources: Set[str] = set()
         for label, _ in self.additional_lexicon.sublexica["edge_labels"]:
@@ -161,7 +162,7 @@ class LTF(TransitionSystem):
 
         selected_lex_labels = scores_to_selection(additional_scores, self.additional_lexicon, "lex_labels")
         unconstrained_best_labels = scores_to_selection(additional_scores, self.additional_lexicon, "edge_labels")
-        unconstrained_best_constants = scores_to_selection(additional_scores, self.additional_lexicon, "constants")
+        #unconstrained_best_constants = scores_to_selection(additional_scores, self.additional_lexicon, "constants")
         unconstrained_term_types = scores_to_selection(additional_scores, self.additional_lexicon, "term_types")
 
         r = []
@@ -211,15 +212,14 @@ class LTF(TransitionSystem):
                         best_apply_constant = None
                         best_apply_lex_type = None
 
-
                         for todo_source in self.applysets_todo[i][tos-1]:
                             req = lex_type_of_tos.get_request(todo_source)
                             #i_req = self.typ2i[req]
+                            source_score = label_scores[i, self.additional_lexicon.get_id("edge_labels", "APP_"+todo_source)]
 
                             for lex_type in self.candidate_lex_types.get_candidates(req, words_left_before_selection):
                                 best_local_constant, best_local_constant_score = get_best_constant(self.typ2supertag[lex_type], constant_scores[i])
-                                score = label_scores[i, self.additional_lexicon.get_id("edge_labels", "APP_"+todo_source)] \
-                                         + best_local_constant_score #+ term_type_scores[i, i_req]
+                                score = source_score + best_local_constant_score #+ term_type_scores[i, i_req]
 
                                 if score >= max_apply_score:
                                     best_apply_source = todo_source
@@ -235,34 +235,29 @@ class LTF(TransitionSystem):
                         best_modify_term_type = None
                         best_modify_lex_type = None
 
-                        if words_left_before_selection > 0: # MOD is only allowed if it leaves enough words.
-                            # Checking MOD is relatively expensive, don't do it if the unconstrained best choices match the APP choices
-                            if unconstrained_term_types is not None and not (best_apply_constant is not None and
-                                    unconstrained_best_constants[i] == self.additional_lexicon.get_str_repr("constants", best_apply_constant) and
-                                    unconstrained_best_labels[i] == "APP_"+best_apply_source and
-                                    unconstrained_term_types[i] == str(best_apply_term_type)):
+                        if words_left_before_selection > 0 and unconstrained_term_types is not None and \
+                                (best_apply_source is None or unconstrained_best_labels[i].startswith("MOD")):
+                            # MOD is only allowed if it leaves enough words.
+                            # Also bother checking only if the best label is MOD or no apply source could be found.
+                            # (Makes parsing faster, from 90 seconds down to 70 on gold dev on my laptop.)
 
-                                for orig_subtype in self.subtype_cache.get_subtypes_of(lex_type_of_tos):
-                                    for source in self.sources - set(orig_subtype.nodes()): # all sources that are not present in subtype already
-                                        subtype = orig_subtype.copy()
-                                        subtype.add_node(source)
+                            for source, subtype in self.mod_cache.get_modifiers(lex_type_of_tos):
+                                local_subtype_score = term_type_scores[i, self.typ2i[subtype]]
+                                local_label_score = label_scores[i, self.additional_lexicon.get_id("edge_labels", "MOD_"+source)]
+                                local_score = local_subtype_score + local_label_score
 
-                                        if subtype not in self.typ2i: #for now skip subtypes that are not present in type lexicon
-                                            continue
+                                for lex_type in self.candidate_lex_types.get_candidates(subtype, words_left_before_selection-1):
+                                    # we use words_left_before_selection - 1 because by adding the MOD edge, we have one word less (this one)
+                                    # and we didn't fill a source in the parent node that would compensate for that
 
-                                        for lex_type in self.candidate_lex_types.get_candidates(subtype, words_left_before_selection-1):
-                                            # we use words_left_before_selection - 1 because by adding the MOD edge, we have one word less (this one)
-                                            # and we didn't fill a source in the parent node that would compensate for that
-
-                                            best_local_constant, best_local_constant_score = get_best_constant(self.typ2supertag[lex_type], constant_scores[i])
-                                            score = label_scores[i, self.additional_lexicon.get_id("edge_labels", "MOD_"+source)] \
-                                                + term_type_scores[i, self.typ2i[subtype]] + best_local_constant_score
-                                            if score > max_mod_score:
-                                                max_mod_score = score
-                                                best_modify_source = source
-                                                best_modify_constant = best_local_constant
-                                                best_modify_term_type = subtype
-                                                best_modify_lex_type = lex_type
+                                    best_local_constant, best_local_constant_score = get_best_constant(self.typ2supertag[lex_type], constant_scores[i])
+                                    score = local_score + best_local_constant_score
+                                    if score > max_mod_score:
+                                        max_mod_score = score
+                                        best_modify_source = source
+                                        best_modify_constant = best_local_constant
+                                        best_modify_term_type = subtype
+                                        best_modify_lex_type = lex_type
 
 
                         #Make a decision on APP vs MOD
@@ -280,7 +275,7 @@ class LTF(TransitionSystem):
                             self.applysets_todo[i][tos-1].remove(best_apply_source)
                             self.lexical_types[i][selected_node_in_batch_element-1] = best_apply_lex_type
 
-                        self.lex_labels[i][selected_node_in_batch_element-1] = selected_lex_labels[i]
+                    self.lex_labels[i][selected_node_in_batch_element-1] = selected_lex_labels[i]
 
                     # push onto stack
                     self.stack[i].append(selected_node_in_batch_element)

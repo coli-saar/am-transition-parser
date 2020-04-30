@@ -312,7 +312,7 @@ class TypeContextProvider(ContextProvider):
     def __init__(self, additional_lexicon : AdditionalLexicon, hidden_dim : int, dropout : float = 0.0):
         super().__init__()
         self.additional_lexicon = additional_lexicon
-        self.embeddings = Embedding(additional_lexicon.sublexica["lexical_types"].vocab_size(), hidden_dim)
+        self.embeddings = Embedding(additional_lexicon.sublexica["term_types"].vocab_size(), hidden_dim) #term_types is the name but it really is all types!
         self.dropout = Dropout(dropout)
 
     def compute_context(self, state : Dict[str, torch.Tensor], context : Dict[str, torch.Tensor]) -> torch.Tensor:

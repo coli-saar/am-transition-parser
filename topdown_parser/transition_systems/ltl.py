@@ -113,6 +113,13 @@ class DFSChildrenFirst(TransitionSystem):
         self.supertags = [["_--TYPE--_" for _ in range(len(sentence.words))] for sentence in sentences]
         self.sentences = sentences
 
+    def get_additional_choices(self, decision : Decision) -> Dict[str, List[str]]:
+        """
+        Turn a decision into a dictionary of additional choices (beyond the node that is selected)
+        :param decision:
+        :return:
+        """
+        return {"selected_edge_labels" : [decision.label], "selected_constants" : ["--TYPE--".join(decision.supertag)]}
 
     def step(self, selected_nodes: torch.Tensor, additional_scores : Dict[str, torch.Tensor]) -> Tuple[torch.Tensor, torch.Tensor]:
         device = get_device_id(selected_nodes)

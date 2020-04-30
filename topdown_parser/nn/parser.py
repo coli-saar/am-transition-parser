@@ -96,6 +96,7 @@ class TopDownDependencyParser(Model):
         self.well_typed = 0
         self.has_empty_tree_type = 0
         self.sentences_parsed = 0
+        self.has_been_training_before = False
 
     def forward(self, words: Dict[str, torch.Tensor],
                 pos_tags: torch.LongTensor,
@@ -115,6 +116,7 @@ class TopDownDependencyParser(Model):
                 term_types : Optional[torch.Tensor] = None,
                 term_type_mask : Optional[torch.Tensor] = None) -> Dict[str, torch.Tensor]:
 
+        self.has_been_training_before = self.has_empty_tree_type or self.training
         batch_size, seq_len = pos_tags.shape
         # Encode the input:
         state = self.encode(words, pos_tags, lemmas, ner_tags)  # shape (batch_size, seq_len, encoder_dim)
@@ -124,7 +126,7 @@ class TopDownDependencyParser(Model):
 
         sentences = [ m["am_sentence"] for m in metadata]
         ret = {}
-        if seq is not None and labels is not None and label_mask is not None and context is not None:
+        if seq is not None and labels is not None and label_mask is not None and context is not None and self.has_been_training_before:
             ret["loss"] = self.compute_loss(state, seq, active_nodes, labels, label_mask, supertags, supertag_mask, lex_labels, lex_label_mask, term_types, term_type_mask, context)
 
         if not self.training:

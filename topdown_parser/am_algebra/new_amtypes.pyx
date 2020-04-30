@@ -445,7 +445,20 @@ class ReadCache:
         t = AMType.parse_str(s)
         self.cache[s] = t
         return t
-        
+
+
+class ModCache:
+    def __init__(self, omega : Iterable[AMType]):
+        self.can_be_modified_by : Dict[AMType, Set[Tuple[str, AMType]]] = {t : set() for t in omega}
+
+        for t1 in omega:
+            for t2 in omega:
+                for source in t2.origins:
+                    if t1.can_be_modified_by(t2, source):
+                        self.can_be_modified_by[t1].add((source, t2))
+
+    def get_modifiers(self, t : AMType) -> Iterable[Tuple[str, AMType]]:
+        return iter(self.can_be_modified_by[t])
 
 class CandidateLexType:
     
