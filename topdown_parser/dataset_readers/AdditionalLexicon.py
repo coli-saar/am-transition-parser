@@ -5,10 +5,10 @@ from allennlp.common.checks import ConfigurationError
 
 
 class Lexicon:
-
+    UNK = "<UNK>"
     def __init__(self, file_name : str):
         self.s2i = dict()
-        self.i2s = []
+        self.i2s = [Lexicon.UNK]
         with open(file_name) as fil:
             for i,line in enumerate(fil):
                 line = line.rstrip("\n")
@@ -23,6 +23,9 @@ class Lexicon:
             return self.s2i[s]
         return 0
 
+    def __iter__(self):
+        return iter(self.s2i.items())
+
 
 
 class AdditionalLexicon(Registrable):
@@ -32,7 +35,7 @@ class AdditionalLexicon(Registrable):
     this is needed because when the context is gathered in the DatasetReader, the mapping
     between these things and ids is not performed yet.
     """
-    POSSIBLE_KEYS = {"edge_labels", "lexical_types"}
+    POSSIBLE_KEYS = {"edge_labels", "term_types", "constants", "lex_labels"}
 
     def __init__(self, sublexica : Dict[str, str]):
         super().__init__()
@@ -41,3 +44,12 @@ class AdditionalLexicon(Registrable):
             raise ConfigurationError(f"Unkown keys used: {sublexica.keys()}, I only know {AdditionalLexicon.POSSIBLE_KEYS}")
 
         self.sublexica = { name : Lexicon(path) for name, path  in sublexica.items()}
+
+    def get_id(self, sublexicon : str, s : str) -> int:
+        return self.sublexica[sublexicon].get_id(s)
+
+    def get_str_repr(self, sublexicon : str, id : int) -> str:
+        return self.sublexica[sublexicon].i2s[id]
+
+    def vocab_size(self, sublexicon : str) -> int:
+        return self.sublexica[sublexicon].vocab_size()

@@ -8,6 +8,7 @@ from topdown_parser.dataset_readers.AdditionalLexicon import AdditionalLexicon
 from topdown_parser.dataset_readers.amconll_tools import AMSentence
 from topdown_parser.nn.utils import get_device_id
 from topdown_parser.transition_systems.transition_system import TransitionSystem, Decision, get_parent, get_siblings
+from topdown_parser.transition_systems.utils import scores_to_selection
 
 
 def flatten(l: Iterable[List[Any]]) -> List[Any]:
@@ -20,7 +21,7 @@ def flatten(l: Iterable[List[Any]]) -> List[Any]:
 @TransitionSystem.register("dfs")
 class DFS(TransitionSystem):
 
-    def __init__(self, children_order: str, pop_with_0: bool, additional_lexicon : Optional[AdditionalLexicon] = None):
+    def __init__(self, children_order: str, pop_with_0: bool, additional_lexicon : AdditionalLexicon):
         """
         Select children_order : "LR" (left to right) or "IO" (inside-out, recommended by Ma et al.)
         """
@@ -65,6 +66,27 @@ class DFS(TransitionSystem):
         r = self._construct_seq(t)
         return r
 
+    def check_correct(self, gold_sentence : AMSentence, predicted : AMSentence) -> bool:
+        return all(x.head == y.head for x, y in zip(gold_sentence, predicted)) and \
+               all(x.label == y.label for x, y in zip(gold_sentence, predicted)) and \
+               all(x.fragment == y.fragment and x.typ == y.typ for x, y in zip(gold_sentence, predicted))
+
+    def get_additional_choices(self, decision : Decision) -> Dict[str, List[str]]:
+        """
+        Turn a decision into a dictionary of additional choices (beyond the node that is selected)
+        :param decision:
+        :return:
+        """
+        r = dict()
+        if decision.label != "":
+            r["selected_edge_labels"] = [decision.label]
+        if decision.supertag != ("",""):
+            r["selected_constants"] = ["--TYPE--".join(decision.supertag)]
+        if decision.lexlabel != "":
+            r["selected_lex_labels"] = [decision.lexlabel]
+
+        return r
+
     def reset_parses(self, sentences: List[AMSentence], input_seq_len: int) -> None:
         self.input_seq_len = input_seq_len
         self.batch_size = len(sentences)
@@ -77,14 +99,14 @@ class DFS(TransitionSystem):
         self.supertags = [["_--TYPE--_" for _ in range(len(sentence.words))] for sentence in sentences]
         self.sentences = sentences
 
-    def step(self, selected_nodes: torch.Tensor, additional_choices : Dict[str, List[str]]) -> Tuple[torch.Tensor, torch.Tensor]:
+    def step(self, selected_nodes: torch.Tensor, additional_scores : Dict[str, torch.Tensor]) -> Tuple[torch.Tensor, torch.Tensor]:
         device = get_device_id(selected_nodes)
         assert selected_nodes.shape == (self.batch_size,)
 
         selected_nodes = selected_nodes.cpu().numpy()
-        selected_labels = additional_choices["selected_labels"]
-        selected_supertags = additional_choices.get("selected_supertags", None)
-        selected_lex_labels = additional_choices.get("selected_lex_labels", None)
+        selected_labels = scores_to_selection(additional_scores, self.additional_lexicon, "edge_labels")
+        selected_supertags = scores_to_selection(additional_scores, self.additional_lexicon, "constants")
+        selected_lex_labels = scores_to_selection(additional_scores, self.additional_lexicon, "lex_labels")
 
         r = []
         next_choices = []

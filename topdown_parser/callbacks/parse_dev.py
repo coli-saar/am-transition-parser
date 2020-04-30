@@ -23,3 +23,10 @@ class ParseDev(Callback):
         results = self.eval_command.evaluate(filename)
         trainer.val_metrics.update(results)
         model.get_metrics(reset=True)
+
+@Callback.register("create-checkpoint")
+class CreateCheckpoint(Callback):
+
+    def call(self, annotator : Annotator, model : Model, trainer : Optional["PipelineTrainer"] = None, experiment : Optional[Experiment] = None):
+        if trainer is not None:
+            trainer._save_checkpoint("before-validation")

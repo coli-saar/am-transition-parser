@@ -1,10 +1,11 @@
 import subprocess
-from typing import List, Dict, Tuple, Iterable, Union, Optional
+from typing import List, Dict, Tuple, Iterable, Union, Optional, Set
 
 from dataclasses import dataclass
 import os
 import multiprocessing as mp
 
+from topdown_parser.am_algebra import AMType
 
 
 @dataclass(frozen=True)
@@ -49,6 +50,15 @@ class AMSentence:
             return False
 
         return all( w==o for w,o in zip(self.words, other.words))
+
+    def normalize_types(self) -> "AMSentence":
+        """
+        Parse the types and convert them to strings again to normalize them.
+        :return:
+        """
+        return AMSentence([Entry(word.token, word.replacement, word.lemma, word.pos_tag, word.ner_tag, word.fragment, word.lexlabel,
+                                 str(AMType.parse_str(word.typ)), word.head, word.label, word.aligned,word.range)
+                           for i,word in enumerate(self.words)],self.attributes)
 
     def get_tokens(self, shadow_art_root) -> List[str]:
         r = [word.token for word in self.words]
@@ -145,6 +155,15 @@ class AMSentence:
         return AMSentence([Entry(word.token, word.replacement, word.lemma, word.pos_tag, word.ner_tag, "_", "_",
                                  "_", 0, "IGNORE", word.aligned, word.range)
                            for word in self.words],self.attributes)
+
+    def get_root(self) -> Optional[int]:
+        """
+        Returns the index of the root, 0-based.
+        :return:
+        """
+        for i,e in enumerate(self.words):
+            if e.head == 0 and e.label == "ROOT":
+                return i
 
     def __str__(self):
         r = []
@@ -249,65 +268,7 @@ def parse_amconll(fil, validate:bool = True) -> Iterable[AMSentence]:
                           int(fields[9]), fields[10], bool(fields[11]),fields[12]))
 
 
-def get_tree_type(sent : AMSentence) -> Optional["AMType"]:
-    from ..am_algebra.tree import Tree
-    from ..am_algebra import AMType, ReadCache, NonAMTypeException
-    deptree = Tree.from_am_sentence(sent)
 
-    cache = ReadCache()
 
-    def determine_tree_type(node : Tuple[int, Entry], children : List[Tuple[Optional[AMType],str]]) -> Tuple[Optional[AMType],str]:
-        try:
-            lextyp = cache.parse_str(node[1].typ)
-        except NonAMTypeException:
-            return None, node[1].label
 
-        apply_children : Dict[str, AMType] = dict() # maps sources to types of children
 
-        for child_typ, label in children:
-            if child_typ is None: # one child is not well-typed
-                return None, node[1].label
-
-            if "_" in label:
-                source = label.split("_")[1]
-                if label.startswith("MOD") and not lextyp.can_be_modified_by(child_typ, source):
-                    return None, node[1].label
-                elif label.startswith("APP"):
-                    apply_children[source] = child_typ
-            else:
-                if label == "IGNORE":
-                    if not child_typ.is_bot:
-                        return None, node[1].label
-
-                elif label == "ROOT":
-                    if node[1].head == -1:
-                        return child_typ, node[1].label
-                    else:
-                        return None, node[1].label
-                else:
-                    raise ValueError("Nonsensical edge label: "+label)
-
-        typ = lextyp
-        changed = True
-        while changed:
-            changed = False
-            remove = []
-            for o in apply_children:
-                if typ.can_apply_to(apply_children[o], o):
-                    typ = typ.perform_apply(o)
-                    remove.append(o)
-                    changed = True
-
-            for source in remove:
-                del apply_children[source]
-
-        if apply_children == dict():
-            return typ,node[1].label
-
-        return None, node[1].label
-
-    typ, _ = deptree.fold(determine_tree_type)
-    return typ
-
-def is_welltyped(sent : AMSentence) -> bool:
-    return get_tree_type(sent) is not None

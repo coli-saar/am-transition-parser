@@ -2,20 +2,22 @@ import math
 from copy import deepcopy
 
 import torch
+from allennlp.common import Registrable
 from allennlp.data import Vocabulary
 from allennlp.models import Model
 from allennlp.modules import FeedForward
-from torch.nn import Parameter
+from torch.nn import Parameter, Module
 import torch.nn.functional as F
 
+from topdown_parser.dataset_readers.AdditionalLexicon import AdditionalLexicon
 
-class EdgeLabelModel(Model):
 
-    def __init__(self, vocab: Vocabulary, formalism : str):
-        super().__init__(vocab)
-        self.formalism = formalism
-        self.output_namespace = formalism+"_labels"
-        self.vocab_size = self.vocab.get_vocab_size(self.output_namespace)
+class EdgeLabelModel(Registrable, Module):
+
+    def __init__(self, lexicon : AdditionalLexicon):
+        super().__init__()
+        self.lexicon = lexicon
+        self.vocab_size = lexicon.vocab_size("edge_labels")
 
     def set_input(self, encoded_input : torch.Tensor, mask : torch.Tensor) -> None:
         """
@@ -39,8 +41,8 @@ class EdgeLabelModel(Model):
 @EdgeLabelModel.register("simple")
 class SimpleEdgeLabelModel(EdgeLabelModel):
 
-    def __init__(self, vocab: Vocabulary, formalism : str, mlp : FeedForward):
-        super().__init__(vocab,formalism)
+    def __init__(self, lexicon : AdditionalLexicon, mlp : FeedForward):
+        super().__init__(lexicon)
         self.feedforward = mlp
         self.output_layer = torch.nn.Linear(mlp.get_output_dim(), self.vocab_size)
 
@@ -69,8 +71,8 @@ class SimpleEdgeLabelModel(EdgeLabelModel):
 @EdgeLabelModel.register("ma")
 class MaEdgeModel(EdgeLabelModel):
 
-    def __init__(self, vocab: Vocabulary, formalism : str, mlp: FeedForward):
-        super().__init__(vocab, formalism)
+    def __init__(self, lexicon : AdditionalLexicon, mlp: FeedForward):
+        super().__init__(lexicon)
         self.head_mlp = mlp
         self.dep_mlp = deepcopy(mlp)
 

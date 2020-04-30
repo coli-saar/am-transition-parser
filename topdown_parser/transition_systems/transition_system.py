@@ -4,7 +4,8 @@ from typing import List, Iterable, Optional, Tuple, Dict, Any, Set
 import torch
 from allennlp.common import Registrable
 
-from topdown_parser.dataset_readers.AdditionalLexicon import AdditionalLexicon
+from topdown_parser.am_algebra import AMType
+from topdown_parser.dataset_readers.AdditionalLexicon import AdditionalLexicon, Lexicon
 from topdown_parser.dataset_readers.amconll_tools import AMSentence
 from topdown_parser.nn.utils import get_device_id
 
@@ -15,11 +16,12 @@ class Decision:
     label : str
     supertag : Tuple[str, str]
     lexlabel : str
+    termtyp : Optional[AMType] = None
 
 
 class TransitionSystem(Registrable):
 
-    def __init__(self, additional_lexicon : Optional[AdditionalLexicon] = None):
+    def __init__(self, additional_lexicon : AdditionalLexicon):
         self.additional_lexicon = additional_lexicon
 
     def get_order(self, sentence : AMSentence) -> Iterable[Decision]:
@@ -27,6 +29,16 @@ class TransitionSystem(Registrable):
         Pre-compute the sequence of decisions that parser should produce.
         The decisions use 1-based indexing for nodes.
         :param sentence:
+        :return:
+        """
+        raise NotImplementedError()
+
+    def check_correct(self, gold_sentence : AMSentence, predicted : AMSentence) -> bool:
+        """
+        Check if the predicted sentence is exactly the same as the gold sentence.
+        Has to be implemented because not all transition system have to predict lexical as-graphs.
+        :param gold_sentence:
+        :param predicted:
         :return:
         """
         raise NotImplementedError()
@@ -40,11 +52,49 @@ class TransitionSystem(Registrable):
         """
         raise NotImplementedError()
 
-    def step(self, selected_nodes : torch.Tensor, additional_choices : Dict[str, List[str]]) -> Tuple[torch.Tensor, torch.Tensor]:
+    def get_additional_choices(self, decision : Decision) -> Dict[str, List[str]]:
+        """
+        Turn a decision into a dictionary of additional choices (beyond the node that is selected)
+        :param decision:
+        :return:
+        """
+        raise NotImplementedError()
+
+    def additional_choices_to_scores(self, additional_choices : Dict[str, List[str]]) -> Dict[str, torch.Tensor]:
+        """
+        Convert decisions into scores.
+        :param additional_choices: a dictionary with additional choices, keys are selected_* (where * is the name of vocabulary where
+        to perform the lookup, e.g. selected_edge_labels)
+        :return: a dictionary mapping *_scores to score tensors of shape (batch_size, vocab size)
+        """
+        if len(additional_choices) == 0:
+            return dict()
+
+        some_key = next(iter(additional_choices))
+        batch_size = len(additional_choices[some_key])
+
+        with torch.no_grad():
+            r = dict()
+            for key in additional_choices:
+                _, name = key.split("selected_")  # eg. selected_constants -> ['', 'constants']
+
+                scores = torch.zeros(batch_size, self.additional_lexicon.vocab_size(name))
+
+                for i,label in enumerate(additional_choices[key]):
+                    label = str(label)
+                    index = self.additional_lexicon.get_id(name, label)
+                    assert self.additional_lexicon.get_str_repr(name, index) != Lexicon.UNK, f"{label} couldn't be found in lexicon with name {name}"
+                    scores[i, index] = 1
+
+                r[name+"_scores"] = scores  # e.g. constants_scores
+
+            return r
+
+    def step(self, selected_nodes : torch.Tensor, additional_scores : Dict[str, torch.Tensor]) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Informs the transition system about the last node chosen
         Returns the index of the node that will get a child next according to the transitions system.
-        :param additional_choices: additional choices for each batch element, like edge labels for example.
+        :param additional_scores: additional choices for each batch element, like edge labels for example.
         :param selected_nodes: (batch_size,), 1-based indexing
         :return: a tensor of shape (batch_size,) of currently active nodes
             and a tensor of shape (batch_size, input_seq_len) which for every input position says if it is a valid next choice.
@@ -137,12 +187,12 @@ class TransitionSystem(Registrable):
                 #shape (batch_size, max. number of children)
                 for i in range(batch_size):
                     for j, label in enumerate(labels_of_other_children[i]):
-                        label_tensor[i,j] = self.additional_lexicon.sublexica["edge_labels"].get_id(label)
+                        label_tensor[i,j] = self.additional_lexicon.get_id("edge_labels", label)
                 ret["children_labels"] = label_tensor
                 #mask is children_mask
 
             if "lexical_types" in self.additional_lexicon.sublexica and supertags is not None:
-                supertag_tensor = torch.tensor([self.additional_lexicon.sublexica["lexical_types"].get_id(t) for t in supertags_of_current_node], dtype=torch.long, device=device) #shape (batch_size,)
+                supertag_tensor = torch.tensor([self.additional_lexicon.get_id("term_types", t) for t in supertags_of_current_node], dtype=torch.long, device=device) #shape (batch_size,)
                 ret["lexical_types"] = supertag_tensor
 
             return ret

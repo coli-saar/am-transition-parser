@@ -1,19 +1,24 @@
 import torch
+from allennlp.common import Registrable
 from allennlp.data import Vocabulary
 from allennlp.models import Model
 from allennlp.modules import FeedForward
 from torch import nn
+from torch.nn import Module
+
+from topdown_parser.dataset_readers.AdditionalLexicon import AdditionalLexicon
 
 
 class Supertagger(Model):
 
-    def __init__(self, vocab: Vocabulary, formalism : str, suffix_namespace : str):
+    def __init__(self, vocab : Vocabulary, lexicon : AdditionalLexicon, namespace : str):
         super().__init__(vocab)
-        self.formalism = formalism
-        self.output_namespace = formalism+"_" + suffix_namespace
-        assert suffix_namespace in ["supertags", "lex_labels"]
 
-        self.vocab_size = self.vocab.get_vocab_size(self.output_namespace)
+        if namespace in vocab._index_to_token:
+            self.vocab_size = vocab.get_vocab_size(namespace) #for lexical labels
+        else:
+            self.vocab_size = lexicon.vocab_size(namespace) #for graph constants
+
 
     def set_input(self, encoded_input: torch.Tensor, mask: torch.Tensor) -> None:
         """
@@ -37,8 +42,8 @@ class Supertagger(Model):
 @Supertagger.register("simple-tagger")
 class SimpleTagger(Supertagger):
 
-    def __init__(self, vocab: Vocabulary, formalism: str, suffix_namespace: str, mlp : FeedForward):
-        super().__init__(vocab, formalism, suffix_namespace)
+    def __init__(self, vocab: Vocabulary, lexicon : AdditionalLexicon, namespace: str, mlp : FeedForward):
+        super().__init__(vocab, lexicon, namespace)
 
         self.mlp = mlp
         self.output_layer = nn.Linear(mlp.get_output_dim(), self.vocab_size)
@@ -59,8 +64,8 @@ class SimpleTagger(Supertagger):
 @Supertagger.register("combined-tagger")
 class CombinedTagger(Supertagger):
 
-    def __init__(self, vocab: Vocabulary, formalism: str, suffix_namespace: str, mlp : FeedForward):
-        super().__init__(vocab, formalism, suffix_namespace)
+    def __init__(self, vocab: Vocabulary, lexicon : AdditionalLexicon, namespace: str, mlp : FeedForward):
+        super().__init__(vocab, lexicon, namespace)
 
         self.mlp = mlp
         self.output_layer = nn.Linear(mlp.get_output_dim(), self.vocab_size)
@@ -81,8 +86,8 @@ class CombinedTagger(Supertagger):
 @Supertagger.register("no-decoder-tagger")
 class CombinedTagger(Supertagger):
 
-    def __init__(self, vocab: Vocabulary, formalism: str, suffix_namespace: str, mlp : FeedForward):
-        super().__init__(vocab, formalism, suffix_namespace)
+    def __init__(self, vocab: Vocabulary, lexicon : AdditionalLexicon, namespace: str, mlp : FeedForward):
+        super().__init__(vocab, lexicon, namespace)
 
         self.mlp = mlp
         self.output_layer = nn.Linear(mlp.get_output_dim(), self.vocab_size)

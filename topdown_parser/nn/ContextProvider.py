@@ -272,9 +272,39 @@ class LabelContextProvider(ContextProvider):
     def forward(self, current_node : torch.Tensor, state : Dict[str, torch.Tensor], context : Dict[str, torch.Tensor]) -> torch.Tensor:
         return current_node + self.compute_context(state, context)
 
+@ContextProvider.register("last-label-embedder")
+class LastLabelEmbedder(ContextProvider):
+    """
+    Add information about most recent label of child.
+    """
+
+    def __init__(self, additional_lexicon : AdditionalLexicon, hidden_dim : int):
+        super().__init__()
+        self.additional_lexicon = additional_lexicon
+        self.embeddings = Embedding(additional_lexicon.sublexica["edge_labels"].vocab_size(), hidden_dim)
+
+    def compute_context(self, state : Dict[str, torch.Tensor], context : Dict[str, torch.Tensor]) -> torch.Tensor:
+        edge_labels = context["children_labels"] #shape (batch_size, max number of children)
+
+        children_mask = context["children_mask"] # (batch_size, max number of children)
+        batch_size, _ = children_mask.shape
+
+        number_of_children = get_lengths_from_binary_sequence_mask(children_mask) # (batch_size,)
+
+        most_recent_label = edge_labels[range(batch_size), number_of_children-1] # shape (batch_size,)
+
+        encoded_label = self.embeddings(most_recent_label) # shape (batch_size, embedding dim)
+
+        # Some nodes don't have children, mask them out:
+        encoded_label = (number_of_children != 0).unsqueeze(1) * encoded_label #shape (batch_size, embedding dim)
+        return encoded_label
+
+    def forward(self, current_node : torch.Tensor, state : Dict[str, torch.Tensor], context : Dict[str, torch.Tensor]) -> torch.Tensor:
+
+        return current_node + self.compute_context(state, context)
 
 @ContextProvider.register("type-embedder")
-class LabelContextProvider(ContextProvider):
+class TypeContextProvider(ContextProvider):
     """
     Add information about lexical type of current node.
     """

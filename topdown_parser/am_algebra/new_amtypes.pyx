@@ -10,7 +10,7 @@ Created on Tue Dec  3 20:47:47 2019
 import pyximport; pyximport.install()
 from .dag import DiGraph
 
-from typing import Set, Dict, Tuple, List, Iterator, Optional
+from typing import Set, Dict, Tuple, List, Iterator, Optional, Iterable
 import re
 
 
@@ -54,7 +54,7 @@ class AMType(DiGraph):
             raise NonAMTypeException("Supposed type has a cycle")
 
         if not self.verify():
-            raise NonAMTypeException("verfiy failed")
+            raise NonAMTypeException("verify failed")
             
         
     def verify(self) -> bool:
@@ -247,16 +247,29 @@ class AMType(DiGraph):
         #return value is all sources in this type that are not in target
         ret = set(self.nodes()) - set(target.nodes())
         
+        changed = True
+        term_type = self.copy()
+        while changed:
+            changed = False
+            for o in term_type.origins & ret:
+                term_type.remove_node(o)
+                changed = True
+                
+        if term_type != target:
+            return None
+            
+        return ret
+        
         
         # but if any source s in ret is a descendant of a node t in target,
         # then we can't remove s via apply without removing t before.
         # Can check for that by just looking at the children of the nodes in target.
         
-        for node in target.nodes():
-            if set(self.get_children(node)) & ret:
-                return None
+        # ~ for node in target.nodes():
+            # ~ if set(self.get_children(node)) & ret:
+                # ~ return None
             
-        return ret
+        # ~ return ret
     
     def can_apply_to(self, argument : "AMType", source : str) -> bool:
         """
@@ -361,7 +374,30 @@ class AMType(DiGraph):
         return g
 
 
-        
+# ~ def get_all_subtypes(t : AMType) -> Iterable[AMType]:
+# ~ This code has a bug, it doesn't consider subtypes where only edges are removed
+    # ~ agenda = [t]
+    # ~ seen = set()
+
+    # ~ while agenda:
+        # ~ current = agenda.pop()
+        # ~ seen.add(current)
+        # ~ yield current.copy()
+
+        # ~ for source in current.nodes():
+            # ~ asubtype = current.copy_with_removed(source)
+            # ~ if asubtype not in seen:
+                # ~ seen.add(asubtype)
+                # ~ agenda.append(asubtype)
+
+# ~ class SubtypeCache:
+    # ~ def __init__(self):
+        # ~ self.cache : Dict[AMType, Set[AMType]] = dict()
+
+    # ~ def get_all_subtypes(self, t : AMType) -> Set[AMType]:
+        # ~ if t not in self.cache:
+            # ~ self.cache[t] = set(get_all_subtypes(t))
+        # ~ return self.cache[t]
 
 def combinations(head : AMType, dependent : AMType) -> Iterator[Tuple[str,str]]:
     """
@@ -409,19 +445,61 @@ class ReadCache:
         t = AMType.parse_str(s)
         self.cache[s] = t
         return t
+        
+
+class CandidateLexType:
+    
+    def __init__(self, omega : Set[AMType]):
+        self.cache : Dict[AMType, Dict[int, Set[AMType]]]= dict()
+        self.omega = omega
+        
+    def get_candidates(self, term_type : AMType, n : int) -> Iterable[AMType]:
+        """
+        Return all lexical types such that it takes at most n APP operation to
+        reach the given term_type.
+        """
+        
+        if term_type not in self.cache:
+            self.cache[term_type] = dict()
+            for lex_type in self.omega:
+                A = lex_type.get_apply_set(term_type)
+                if A is not None:
+                    if len(A) not in self.cache[term_type]:
+                        self.cache[term_type][len(A)] = set()
+                        
+                    self.cache[term_type][len(A)].add(lex_type)
+            
+        seen = set()
+        for d in self.cache[term_type]:
+            if d <= n:
+                for t in self.cache[term_type][d]:
+                    yield t
+                    
+    def get_candidates_for_set(self, term_types : Set[AMType], n : int) -> Iterable[AMType]:
+        for term_type in term_types:
+            for c in self.get_candidates(term_type, n):
+                yield c
+            
+
 
 if __name__ == "__main__":
     from tqdm import tqdm
     import timeit
     t = AMType.parse_str("(s(), o()")
-    t2 = t.copy()
-    print(timeit.timeit(lambda: t.copy(),number = 40000))
-    t3 = AMType.parse_str("()")
-    bot = AMType.parse_str("_")
+    # ~ t2 = t.copy()
+    # ~ print(timeit.timeit(lambda: t.copy(),number = 40000))
+    # ~ t3 = AMType.parse_str("()")
+    # ~ bot = AMType.parse_str("_")
     print("===")
     print(t)
     
     print(t.get_apply_set(AMType.parse_str("(o2)")))
+    
+    o = ["()", "(s,o)", "(o(s))", "(op1,op2,op3)", "(op1)"]
+    omega = [AMType.parse_str(s) for s in o]
+    print("===")
+    print(omega[3].get_apply_set(omega[4]))
+    print(omega[2].get_apply_set(omega[1]))
     
     #TODO: (s(mod_UNIFY_o(s_UNIFY_o2()), o2())) wird nicht geparst
     # "(o(mod_UNIFY_s()), o2(s_UNIFY_o()), s())"
