@@ -20,8 +20,10 @@ local eval_commands = import "eval_commands.libsonnet";
 
 local additional_lexicon = {
      "sublexica" : {
-            "edge_labels" : "data/AMR/2015/train/edges.txt",
-            "lexical_types" : "data/AMR/2015/train/types.txt"
+            "edge_labels" : "data/AMR/2015/lexicon/edges.txt",
+            "constants" : "data/AMR/2015/lexicon/constants.txt",
+            "term_types" : "data/AMR/2015/lexicon/types.txt",
+            "lex_labels" : "data/AMR/2015/lexicon/lex_labels.txt"
      }
 } ;
 
@@ -105,11 +107,11 @@ local data_iterator = {
 
             "supertagger" : {
 //                "type" : "simple-tagger",
-                "type" : "no-decoder-tagger",
-                "formalism" : "amr",
-                "suffix_namespace" : "supertags",
+                "type" : "combined-tagger",
+                "lexicon" : additional_lexicon,
+                "namespace" : "constants",
                 "mlp" : {
-                    "input_dim" : 2*encoder_dim,
+                    "input_dim" : 2*2*encoder_dim,
                     "num_layers" : 1,
                     "hidden_dims" : 1024,
                     "dropout" : 0.4,
@@ -118,12 +120,12 @@ local data_iterator = {
             },
 
             "lex_label_tagger" : {
-//                "type" : "simple-tagger",
-                "type" : "no-decoder-tagger",
-                "formalism" : "amr",
-                "suffix_namespace" : "lex_labels",
+            "type" : "combined-tagger",
+//            "type" : "no-decoder-tagger",
+            "lexicon" : additional_lexicon,
+            "namespace" : "lex_labels",
                 "mlp" : {
-                    "input_dim" : 2*encoder_dim,
+                    "input_dim" : 2*2*encoder_dim,
                     "num_layers" : 1,
                     "hidden_dims" : 1024,
                     "dropout" : 0.4,
@@ -189,7 +191,7 @@ local data_iterator = {
 
         "edge_label_model" : {
             "type" : "simple",
-            "formalism" : formalism,
+            "lexicon" : additional_lexicon,
             "mlp" : {
                 "input_dim" : 2*2*encoder_dim,
                 "num_layers" : 1,
