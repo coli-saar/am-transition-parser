@@ -6,7 +6,8 @@ from typing import Dict, Set
 
 sys.path.append(".")
 from topdown_parser.dataset_readers.amconll_tools import parse_amconll, AMSentence
-from topdown_parser.am_algebra import ReadCache, NonAMTypeException, AMType, Tree
+from topdown_parser.am_algebra import ReadCache, NonAMTypeException, AMType
+from topdown_parser.am_algebra.tree import Tree
 from topdown_parser.am_algebra.tools import get_term_types, is_welltyped
 
 optparser = argparse.ArgumentParser(add_help=True,
