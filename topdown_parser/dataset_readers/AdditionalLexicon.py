@@ -16,7 +16,7 @@ class Lexicon:
                 self.s2i[line] = i+1
 
     def vocab_size(self) -> int:
-        return len(self.i2s)+1 # UNK symbol
+        return len(self.i2s)
 
     def get_id(self, s : str):
         if s in self.s2i:
