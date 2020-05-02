@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import List, Iterable, Optional, Tuple, Dict, Any, Set
 
 import torch
+from allennlp.common.checks import ConfigurationError
 
 from topdown_parser.am_algebra import AMType, NonAMTypeException, new_amtypes
 from topdown_parser.am_algebra.new_amtypes import CandidateLexType, ModCache
@@ -24,6 +25,38 @@ def flatten(l: Iterable[List[Any]]) -> List[Any]:
     return r
 
 
+def typ2supertag(lexicon : AdditionalLexicon) -> Dict[AMType, Set[int]]:
+    _typ2supertag : Dict[AMType, Set[int]] = dict() #which supertags have the given type?
+
+    for supertag, i in lexicon.sublexica["constants"]:
+        _, typ = AMSentence.split_supertag(supertag)
+        try:
+            typ = AMType.parse_str(typ)
+            if typ not in _typ2supertag:
+                _typ2supertag[typ] = set()
+
+            _typ2supertag[typ].add(i)
+        except NonAMTypeException:
+            print("Skipping type", typ)
+    return _typ2supertag
+
+def typ2i(additional_lexicon : AdditionalLexicon) -> Dict[AMType, int]:
+    _typ2i :  Dict[AMType, int] = dict()
+    for typ, i in additional_lexicon.sublexica["term_types"]:
+        try:
+            _typ2i[AMType.parse_str(typ)] = i
+        except NonAMTypeException:
+            pass
+    return _typ2i
+
+def collect_sources(additional_lexicon : AdditionalLexicon) -> Set[str]:
+    sources: Set[str] = set()
+    for label, _ in additional_lexicon.sublexica["edge_labels"]:
+        if "_" in label:
+            sources.add(label.split("_")[1])
+    return sources
+
+
 @TransitionSystem.register("ltf")
 class LTF(TransitionSystem):
     """
@@ -40,40 +73,35 @@ class LTF(TransitionSystem):
 
         self.children_order = children_order
 
-        self.typ2supertag : Dict[AMType, Set[int]] = dict() #which supertags have the given type?
+        self.typ2supertag : Dict[AMType, Set[int]] = typ2supertag(self.additional_lexicon)#which supertags have the given type?
 
-        for supertag, i in self.additional_lexicon.sublexica["constants"]:
-            _, typ = AMSentence.split_supertag(supertag)
-            try:
-                typ = AMType.parse_str(typ)
-                if typ not in self.typ2supertag:
-                    self.typ2supertag[typ] = set()
-
-                self.typ2supertag[typ].add(i)
-            except NonAMTypeException:
-                print("Skipping type", typ)
-
-        self.typ2i :  Dict[AMType, int] = dict() # which type has what id?
-
-        for typ, i in self.additional_lexicon.sublexica["term_types"]:
-            try:
-                self.typ2i[AMType.parse_str(typ)] = i
-            except NonAMTypeException:
-                pass
+        self.typ2i :  Dict[AMType, int] = typ2i(self.additional_lexicon) # which type has what id?
 
         self.candidate_lex_types = new_amtypes.CandidateLexType({typ for typ in self.typ2i.keys()})
 
         #self.subtype_cache = SubtypeCache(self.typ2i.keys())
         self.mod_cache = ModCache(self.typ2i.keys())
 
-        self.sources: Set[str] = set()
-        for label, _ in self.additional_lexicon.sublexica["edge_labels"]:
-            if "_" in label:
-                self.sources.add(label.split("_")[1])
+        self.sources: Set[str] = collect_sources(self.additional_lexicon)
 
 
     def predict_supertag_from_tos(self) -> bool:
         return False
+
+    def validate_model(self, parser : "TopDownDependencyParser") -> None:
+        """
+        Check if the parsing model produces all the scores that we need.
+        :param parser:
+        :return:
+        """
+        if parser.term_type_tagger is None:
+            raise ConfigurationError("ltf transition system requires term tagger")
+
+        if parser.lex_label_tagger is None:
+            raise ConfigurationError("ltf transition system requires lex label tagger")
+
+        if parser.supertagger is None:
+            raise ConfigurationError("ltf transition system requires tagger for constants")
 
     def get_order(self, sentence: AMSentence) -> Iterable[Decision]:
         t = Tree.from_am_sentence(sentence)

@@ -10,7 +10,7 @@ Created on Tue Dec  3 20:47:47 2019
 import pyximport; pyximport.install()
 from .dag import DiGraph
 
-from typing import Set, Dict, Tuple, List, Iterator, Optional, Iterable
+from typing import Set, Dict, Tuple, List, Iterator, Optional, Iterable, FrozenSet
 import re
 
 
@@ -374,31 +374,6 @@ class AMType(DiGraph):
         return g
 
 
-# ~ def get_all_subtypes(t : AMType) -> Iterable[AMType]:
-# ~ This code has a bug, it doesn't consider subtypes where only edges are removed
-    # ~ agenda = [t]
-    # ~ seen = set()
-
-    # ~ while agenda:
-        # ~ current = agenda.pop()
-        # ~ seen.add(current)
-        # ~ yield current.copy()
-
-        # ~ for source in current.nodes():
-            # ~ asubtype = current.copy_with_removed(source)
-            # ~ if asubtype not in seen:
-                # ~ seen.add(asubtype)
-                # ~ agenda.append(asubtype)
-
-# ~ class SubtypeCache:
-    # ~ def __init__(self):
-        # ~ self.cache : Dict[AMType, Set[AMType]] = dict()
-
-    # ~ def get_all_subtypes(self, t : AMType) -> Set[AMType]:
-        # ~ if t not in self.cache:
-            # ~ self.cache[t] = set(get_all_subtypes(t))
-        # ~ return self.cache[t]
-
 def combinations(head : AMType, dependent : AMType) -> Iterator[Tuple[str,str]]:
     """
     return the operations allowed between head and dependent.
@@ -449,21 +424,35 @@ class ReadCache:
 
 class ModCache:
     def __init__(self, omega : Iterable[AMType]):
-        self.can_be_modified_by : Dict[AMType, Set[Tuple[str, AMType]]] = {t : set() for t in omega}
+        self.can_be_modified_by : Dict[AMType, Dict[str, Set[AMType]]] = {t : dict() for t in omega}
+        #self.can_be_modified_by : Dict[AMType, Set[Tuple[str, AMType]]] = {t : set() for t in omega}
 
         for t1 in omega:
             for t2 in omega:
                 for source in t2.origins:
                     if t1.can_be_modified_by(t2, source):
-                        self.can_be_modified_by[t1].add((source, t2))
+                        if source not in self.can_be_modified_by[t1]:
+                            self.can_be_modified_by[t1][source] = set()
+                        self.can_be_modified_by[t1][source].add(t2)
 
     def get_modifiers(self, t : AMType) -> Iterable[Tuple[str, AMType]]:
-        return iter(self.can_be_modified_by[t])
+        """
+        Return all types t' that such that MOD_x(t,t') is well-typed for some source x.
+        :param t:
+        :return:
+        """
+        for source in self.can_be_modified_by[t]:
+            for typ in self.can_be_modified_by[t][source]:
+                yield source, typ
+
+    def get_modifiers_with_source(self, lex_type : AMType, source : str) -> Iterable[AMType]:
+        return iter(self.can_be_modified_by[lex_type][source])
 
 class CandidateLexType:
     
     def __init__(self, omega : Set[AMType]):
         self.cache : Dict[AMType, Dict[int, Set[AMType]]]= dict()
+        self.cache_with_apply_sets : Dict[AMType, Dict[int, Set[Tuple[AMType, Set[str]]]]]= dict()
         self.omega = omega
         
     def get_candidates(self, term_type : AMType, n : int) -> Iterable[AMType]:
@@ -481,18 +470,53 @@ class CandidateLexType:
                         self.cache[term_type][len(A)] = set()
                         
                     self.cache[term_type][len(A)].add(lex_type)
-            
-        seen = set()
+
         for d in self.cache[term_type]:
             if d <= n:
                 for t in self.cache[term_type][d]:
                     yield t
-                    
-    def get_candidates_for_set(self, term_types : Set[AMType], n : int) -> Iterable[AMType]:
-        for term_type in term_types:
-            for c in self.get_candidates(term_type, n):
-                yield c
+
+    def get_candidates_with_apply_set(self, term_type : AMType, apply_set_prefix : Set[str], n : int) -> Iterable[Tuple[AMType, FrozenSet[str]]]:
+        if term_type not in self.cache_with_apply_sets:
+            self.cache_with_apply_sets[term_type] = dict()
+            for lex_type in self.omega:
+                A = lex_type.get_apply_set(term_type)
+                if A is not None:
+                    if len(A) not in self.cache_with_apply_sets[term_type]:
+                        self.cache_with_apply_sets[term_type][len(A)] = set()
+
+                    self.cache_with_apply_sets[term_type][len(A)].add((lex_type, frozenset(A)))
+
+        for d in self.cache_with_apply_sets[term_type]:
+            if d <= n:
+                for lex_typ, apply_set in self.cache_with_apply_sets[term_type][d]:
+                    if apply_set_prefix.issubset(apply_set):
+                        yield lex_typ, apply_set
+
+
+    # def get_candidates_for_set(self, term_types : Set[AMType], n : int) -> Iterable[AMType]:
+    #     for term_type in term_types:
+    #         for c in self.get_candidates(term_type, n):
+    #             yield c
             
+
+class ByApplySet:
+
+    def __init__(self, omega : Iterable[AMType]) -> None:
+        self.cache : Dict[Tuple[AMType, FrozenSet[str]], Set[AMType]] = dict()
+
+        for t1 in omega:
+            for t2 in omega:
+                apply_set = t1.get_apply_set(t2)
+                if apply_set is not None:
+                    apply_set = frozenset(apply_set)
+                    if (t2, apply_set) not in self.cache:
+                        self.cache[t2, apply_set]  = set()
+                    self.cache[t2, apply_set].add(t1)
+
+    def by_apply_set(self, term_typ : AMType, apply_set : FrozenSet[str]) -> Iterable[AMType]:
+        return self.cache.get((term_typ, apply_set), set())
+
 
 
 if __name__ == "__main__":

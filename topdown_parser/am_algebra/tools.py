@@ -74,47 +74,47 @@ def get_term_types(deptree : Tree, sent : AMSentence) -> List[Optional[AMType]]:
 def is_welltyped(sent : AMSentence) -> bool:
     return get_tree_type(sent) is not None
 
-def top_down_term_types(sent : AMSentence) -> List[Set[AMType]]:
-    """
-    Returns for every token the set of possible term types when looking from a top-down perspective.
-    :param sent:
-    :return:
-    """
-    term_types = [set() for _ in sent.words]
-    lex_types = [AMType.parse_str(w.typ) for w in sent.words]
+# def top_down_term_types(sent : AMSentence) -> List[Set[AMType]]:
+#     """
+#     Returns for every token the set of possible term types when looking from a top-down perspective.
+#     :param sent:
+#     :return:
+#     """
+#     term_types = [set() for _ in sent.words]
+#     lex_types = [AMType.parse_str(w.typ) for w in sent.words]
+#
+#     for i,word in enumerate(sent.words):
+#         if word.label == "ROOT":
+#             term_types[i] = {AMType.parse_str("()")} # empty term type at the root
+#
+#         elif word.label.startswith("APP_"):
+#             # incoming APP_x edge
+#             source = word.label.split("_")[1]
+#             parent_lex_type = lex_types[word.head-1]
+#             term_types[i] = {parent_lex_type.get_request(source)}
+#
+#         elif word.label.startswith("MOD_"):
+#             source = word.label.split("_")[1]
+#             max_subtype = lex_types[word.head-1]
+#             for subtyp in get_all_subtypes(max_subtype):
+#                 subtyp.add_node(source)
+#                 term_types[i].add(subtyp)
+#
+#     return term_types
 
-    for i,word in enumerate(sent.words):
-        if word.label == "ROOT":
-            term_types[i] = {AMType.parse_str("()")} # empty term type at the root
-
-        elif word.label.startswith("APP_"):
-            # incoming APP_x edge
-            source = word.label.split("_")[1]
-            parent_lex_type = lex_types[word.head-1]
-            term_types[i] = {parent_lex_type.get_request(source)}
-
-        elif word.label.startswith("MOD_"):
-            source = word.label.split("_")[1]
-            max_subtype = lex_types[word.head-1]
-            for subtyp in get_all_subtypes(max_subtype):
-                subtyp.add_node(source)
-                term_types[i].add(subtyp)
-
-    return term_types
 
 
-
-class SubtypeCache:
-    def __init__(self, omega : Iterable[AMType]):
-        self.subtypes_of : Dict[AMType, Set[AMType]] = {t : set() for t in omega}
-
-        for t1 in omega:
-            for t2 in omega:
-                if t1.is_compatible_with(t2): #t1 is subgraph of t2
-                    self.subtypes_of[t2].add(t1)
-
-    def get_subtypes_of(self, t):
-        return self.subtypes_of[t]
+# class SubtypeCache:
+#     def __init__(self, omega : Iterable[AMType]):
+#         self.subtypes_of : Dict[AMType, Set[AMType]] = {t : set() for t in omega}
+#
+#         for t1 in omega:
+#             for t2 in omega:
+#                 if t1.is_compatible_with(t2): #t1 is subgraph of t2
+#                     self.subtypes_of[t2].add(t1)
+#
+#     def get_subtypes_of(self, t):
+#         return self.subtypes_of[t]
 
 
 

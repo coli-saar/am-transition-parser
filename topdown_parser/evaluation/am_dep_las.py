@@ -77,6 +77,8 @@ lex_labels_correct = 0
 content_nodes_gold = 0
 content_nodes_correct = 0
 
+lex_types_correct = 0
+
 with open(opts.gold) as f1:
     gold = { attr["id"] : s for s, attr in parse_amconll(f1) }
 
@@ -95,6 +97,9 @@ for id in intersection:
         tokens += 1
         if gold_w.fragment == system_w.fragment and gold_w.type == system_w.type:
             supertags_correct += 1
+
+        if gold_w.type == system_w.type:
+            lex_types_correct += 1
             
         if gold_w.head == system_w.head:
             heads_correct += 1
@@ -117,6 +122,7 @@ if len(intersection) > 0:
     print("UAS (including IGNORE) %", round(heads_correct/tokens*100,3))
     print("LAS (including IGNORE) %", round(labels_and_heads_correct/tokens*100,3))
     print("Content recall %", round(content_nodes_correct/content_nodes_gold*100,3))
+    print("Lex type acc %", round(lex_types_correct/tokens*100,3))
 
    
 

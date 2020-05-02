@@ -98,6 +98,8 @@ class TopDownDependencyParser(Model):
         self.sentences_parsed = 0
         self.has_been_training_before = False
 
+        self.transition_system.validate_model(self)
+
     def forward(self, words: Dict[str, torch.Tensor],
                 pos_tags: torch.LongTensor,
                 lemmas: torch.LongTensor,

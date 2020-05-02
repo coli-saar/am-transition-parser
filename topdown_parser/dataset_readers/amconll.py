@@ -18,7 +18,7 @@ from allennlp.data.tokenizers import Token
 
 from .ContextField import ContextField
 from .amconll_tools import parse_amconll, AMSentence
-from ..am_algebra.tools import is_welltyped, top_down_term_types
+from ..am_algebra.tools import is_welltyped
 from topdown_parser.transition_systems.transition_system import TransitionSystem
 
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
@@ -131,7 +131,6 @@ class AMConllDatasetReader(OrderedDatasetReader):
         # print(am_sentence.get_heads())
         # print(am_sentence.get_edge_labels())
         # print([ AMSentence.split_supertag(s)[1] for s in am_sentence.get_supertags()])
-        # print(top_down_term_types(am_sentence))
 
         decisions = list(self.transition_system.get_order(am_sentence))
 

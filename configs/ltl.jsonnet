@@ -28,8 +28,7 @@ local additional_lexicon = {
 } ;
 
 local transition_system = {
-    "type" : "ltf",
-//    "type" : "dfs-children-first",
+    "type" : "ltl",
     "children_order" : "IO",
     "pop_with_0" : true,
     "additional_lexicon" : additional_lexicon,
@@ -110,19 +109,6 @@ local data_iterator = {
                 "type" : "combined-tagger",
                 "lexicon" : additional_lexicon,
                 "namespace" : "constants",
-                "mlp" : {
-                    "input_dim" : 2*2*encoder_dim,
-                    "num_layers" : 1,
-                    "hidden_dims" : 1024,
-                    "dropout" : 0.4,
-                    "activations" : "tanh",
-                }
-            },
-
-            "term_type_tagger" : {
-                "type" : "combined-tagger",
-                "lexicon" : additional_lexicon,
-                "namespace" : "term_types",
                 "mlp" : {
                     "input_dim" : 2*2*encoder_dim,
                     "num_layers" : 1,

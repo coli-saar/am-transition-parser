@@ -51,5 +51,8 @@ class AdditionalLexicon(Registrable):
     def get_str_repr(self, sublexicon : str, id : int) -> str:
         return self.sublexica[sublexicon].i2s[id]
 
+    def contains(self, sublexicon:str, s : str) -> bool:
+        return s in self.sublexica[sublexicon].s2i
+
     def vocab_size(self, sublexicon : str) -> int:
         return self.sublexica[sublexicon].vocab_size()

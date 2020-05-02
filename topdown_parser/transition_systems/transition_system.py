@@ -24,6 +24,15 @@ class TransitionSystem(Registrable):
     def __init__(self, additional_lexicon : AdditionalLexicon):
         self.additional_lexicon = additional_lexicon
 
+
+    def validate_model(self, parser : "TopDownDependencyParser") -> None:
+        """
+        Check if the parsing model produces all the scores that we need.
+        :param parser:
+        :return:
+        """
+        return
+
     def get_order(self, sentence : AMSentence) -> Iterable[Decision]:
         """
         Pre-compute the sequence of decisions that parser should produce.
