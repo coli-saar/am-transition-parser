@@ -1,3 +1,4 @@
+import time
 from typing import Dict, List, Any, Optional, Tuple
 
 import torch
@@ -118,6 +119,8 @@ class TopDownDependencyParser(Model):
                 term_types : Optional[torch.Tensor] = None,
                 term_type_mask : Optional[torch.Tensor] = None) -> Dict[str, torch.Tensor]:
 
+        parsing_time_t0 = time.time()
+
         self.has_been_training_before = self.has_empty_tree_type or self.training
         batch_size, seq_len = pos_tags.shape
         # Encode the input:
@@ -138,6 +141,12 @@ class TopDownDependencyParser(Model):
 
             sentences = [s.strip_annotation() for s in sentences]
             predictions = self.parse_sentences(state, metadata[0]["formalism"], sentences)
+            parsing_time_t1 = time.time()
+            avg_parsing_time = (parsing_time_t1 - parsing_time_t0) / batch_size
+
+            for pred in predictions:
+                pred.attributes["normalized_parsing_time"] = str(avg_parsing_time)
+                pred.attributes["batch_size"] = str(batch_size)
 
             for p,g in zip(predictions, (m["am_sentence"] for m in metadata)):
                 if p.get_root() == g.get_root():
