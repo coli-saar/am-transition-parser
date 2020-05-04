@@ -151,7 +151,6 @@ class LTL(TransitionSystem):
         selected_nodes = selected_nodes.cpu().numpy()
         label_scores = get_and_convert_to_numpy(additional_scores, "edge_labels_scores") #shape (batch_size, label_vocab)
         constant_scores = get_and_convert_to_numpy(additional_scores, "constants_scores") # shape (batch_size, constant)
-        term_type_scores = get_and_convert_to_numpy(additional_scores, "term_types_scores") # shpae (batch_size, type vocab)
 
 
         selected_lex_labels = scores_to_selection(additional_scores, self.additional_lexicon, "lex_labels")
@@ -166,7 +165,9 @@ class LTL(TransitionSystem):
                 selected_node_in_batch_element = int(selected_nodes[i])
                 smallest_apply_set = 0
 
-                if self._step[i] == 2: # the second step should always be 0, close the artificial root node.
+                if (selected_node_in_batch_element in self.seen[i] and not self.pop_with_0) or \
+                        (selected_node_in_batch_element == 0 and self.pop_with_0) and len(self.stack[i]) == 1 and  self.stack[i][-1] == 0:
+                    # Pop artificial root node
                     self.stack[i].pop()
                     if self.reverse_push_actions:
                             self.stack[i].extend(self.sub_stack[i])
@@ -306,9 +307,12 @@ class LTL(TransitionSystem):
                         else:
                             choices[self.stack[i][-1]] = 1
 
-                for child in range(1, len(self.sentences[i]) + 1):  # or we can choose a node that has not been used yet
-                    if child not in self.seen[i]:
-                        choices[child] = 1
+                if self._step[i] == 1: # second step is always 0
+                    choices[0] = 1
+                else:
+                    for child in range(1, len(self.sentences[i]) + 1):  # or we can choose a node that has not been used yet
+                        if child not in self.seen[i]:
+                            choices[child] = 1
                 next_choices.append(choices)
             else:
                 r.append(0)
