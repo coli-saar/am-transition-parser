@@ -79,4 +79,24 @@ local sdp_evaluator(name) = {
 "PAS" : sdp_evaluator("PAS"),
 "PSD" : sdp_evaluator("PSD"),
 
+    "EDS" : { #don't use file extension for gold_file: use e.g. data/EDS/dev/dev-gold
+        "callbacks" : {
+        "after_validation" : {
+                     "type" : "parse-dev",
+                     "system_input" : "data/EDS/dev/dev.amconll",
+                     "eval_command" : {
+                        "type" : "bash_evaluation_command",
+                        "gold_file": "data/EDS/dev/dev-gold",
+                        "command" : 'java -cp '+ALTO_PATH+' de.saar.coli.amrtagging.formalisms.eds.tools.EvaluateCorpus --corpus {system_output} --outFile {tmp}/output.eds'+
+                        '&& python2 '+tool_dir+'/fast_smatch/fast_smatch.py -f {tmp}/output.eds.amr.txt {gold_file}.amr.txt --pr > {tmp}/metrics.txt'+
+                        '&& python2 '+tool_dir+'/edm/eval_edm.py {tmp}/output.eds.edm {gold_file}.edm >> {tmp}/metrics.txt && cat {tmp}/metrics.txt',
+                        "result_regexes" : {"Smatch_P" : [0, "Precision: (?P<value>.+)"],
+                                            "Smatch_R" : [1, "Recall: (?P<value>.+)"],
+                                            "Smatch_F" : [2, "F-score: (?P<value>.+)"],
+                                            "EDM_F" : [4,"F1-score: (?P<value>.+)"]}
+                     }
+         }
+    }
+    }
+
 }
