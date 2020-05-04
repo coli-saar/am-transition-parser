@@ -10,9 +10,10 @@ from comet_ml import Experiment
 @Callback.register("parse-dev")
 class ParseDev(Callback):
 
-    def __init__(self, eval_command : BaseEvaluationCommand, system_input : str):
+    def __init__(self, eval_command : BaseEvaluationCommand, system_input : str, prefix : Optional[str] = ""):
         self.system_input = system_input
         self.eval_command = eval_command
+        self.prefix = prefix
 
         if self.eval_command.gold_file is None:
             raise ConfigurationError("Callback requires a gold file to be set.")
@@ -21,7 +22,7 @@ class ParseDev(Callback):
         filename = trainer._serialization_dir+f"/full_dev_epoch_{trainer.epoch}.txt"
         annotator.annotate_file(model, self.system_input, filename)
         results = self.eval_command.evaluate(filename)
-        trainer.val_metrics.update(results)
+        trainer.val_metrics.update({self.prefix+name : val for name, val in results.items()})
         model.get_metrics(reset=True)
 
 @Callback.register("create-checkpoint")
