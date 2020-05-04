@@ -17,6 +17,8 @@ from topdown_parser.transition_systems import utils
 from topdown_parser.transition_systems.transition_system import TransitionSystem, Decision, get_parent, get_siblings
 from topdown_parser.transition_systems.utils import scores_to_selection, get_best_constant
 
+import numpy as np
+
 
 def flatten(l: Iterable[List[Any]]) -> List[Any]:
     r = []
@@ -234,7 +236,7 @@ class LTF(TransitionSystem):
                     else:
                         # What if we wanted to apply? What's the best apply operation?
                         lex_type_of_tos = self.lexical_types[i][tos-1]
-                        max_apply_score = float("-inf")
+                        max_apply_score = -np.inf
                         best_apply_source = None
                         best_apply_term_type = None
                         best_apply_constant = None
@@ -257,17 +259,15 @@ class LTF(TransitionSystem):
                                     max_apply_score = score
 
                         # What if we want to modify? Find best mod operation.
-                        max_mod_score = float("-inf")
+                        max_mod_score = -np.inf
                         best_modify_source = None
                         best_modify_constant = None
                         best_modify_term_type = None
                         best_modify_lex_type = None
 
-                        if words_left_before_selection > 0 and unconstrained_term_types is not None and \
-                                (best_apply_source is None or unconstrained_best_labels[i].startswith("MOD")):
+                        if words_left_before_selection > 0 and unconstrained_term_types is not None: #and \
+                                #(best_apply_source is None or unconstrained_best_labels[i].startswith("MOD")):
                             # MOD is only allowed if it leaves enough words.
-                            # Also bother checking only if the best label is MOD or no apply source could be found.
-                            # (Makes parsing faster, from 90 seconds down to 70 on gold dev on my laptop.)
 
                             for source, subtype in self.mod_cache.get_modifiers(lex_type_of_tos):
                                 local_subtype_score = term_type_scores[i, self.typ2i[subtype]]
@@ -287,6 +287,9 @@ class LTF(TransitionSystem):
                                         best_modify_term_type = subtype
                                         best_modify_lex_type = lex_type
 
+                        if best_modify_source is not None:
+                            # to make a fair comparison to the APP score, don't consider the term type score.
+                            max_mod_score = label_scores[i, self.additional_lexicon.get_id("edge_labels", "MOD_"+best_modify_source)] + constant_scores[i, best_modify_constant]
 
                         #Make a decision on APP vs MOD
                         if max_mod_score > max_apply_score:
