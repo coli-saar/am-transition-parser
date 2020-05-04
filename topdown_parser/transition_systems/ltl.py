@@ -142,6 +142,7 @@ class LTL(TransitionSystem):
         self.words_left = [len(sentence.words) for sentence in sentences]
         self.sentences = sentences
         self.root_determined = [False for _ in sentences]
+        self._step = [0 for _ in sentences]
 
     def step(self, selected_nodes: torch.Tensor, additional_scores : Dict[str, torch.Tensor]) -> Tuple[torch.Tensor, torch.Tensor]:
         device = get_device_id(selected_nodes)
@@ -154,19 +155,18 @@ class LTL(TransitionSystem):
 
 
         selected_lex_labels = scores_to_selection(additional_scores, self.additional_lexicon, "lex_labels")
-        unconstrained_best_labels = scores_to_selection(additional_scores, self.additional_lexicon, "edge_labels")
+        #unconstrained_best_labels = scores_to_selection(additional_scores, self.additional_lexicon, "edge_labels")
         #unconstrained_best_constants = scores_to_selection(additional_scores, self.additional_lexicon, "constants")
 
         r = []
         next_choices = []
         for i in range(self.batch_size):
+            self._step[i] = self._step[i] + 1
             if self.stack[i]:
                 selected_node_in_batch_element = int(selected_nodes[i])
                 smallest_apply_set = 0
 
-                if (selected_node_in_batch_element in self.seen[i] and not self.pop_with_0) or \
-                        (selected_node_in_batch_element == 0 and self.pop_with_0) and len(self.stack[i]) == 1 and  self.stack[i][-1] == 0:
-                    # Pop artificial root node
+                if self._step[i] == 2: # the second step should always be 0, close the artificial root node.
                     self.stack[i].pop()
                     if self.reverse_push_actions:
                             self.stack[i].extend(self.sub_stack[i])
