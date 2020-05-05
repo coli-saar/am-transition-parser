@@ -84,7 +84,7 @@ local sdp_evaluator(name) = {
                     "prefix": "PSD_",
                      "eval_command" : {
                          "type" : "bash_evaluation_command",
-                         "gold_file": SDP_prefix+name+"/dev/dev.sdp",
+                         "gold_file": SDP_prefix+"PSD/dev/dev.sdp",
                           "command" : 'java -cp '+ALTO_PATH+' de.saar.coli.amrtagging.formalisms.sdp.psd.tools.ToSDPCorpus --corpus {system_output} --gold {gold_file} --outFile {tmp}/BLABLA',
                           "result_regexes" : {
                                               "P" : [1, "Precision (?P<value>.+)"],
