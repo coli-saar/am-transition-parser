@@ -77,7 +77,23 @@ local sdp_evaluator(name) = {
 
 "DM" : sdp_evaluator("DM"),
 "PAS" : sdp_evaluator("PAS"),
-"PSD" : sdp_evaluator("PSD"),
+"PSD" :    { "callbacks" : {
+                "after_validation" : {
+                    "type" : "parse-dev",
+                    "system_input" : SDP_prefix+"PSD/dev/dev.amconll",
+                    "prefix": "PSD_",
+                     "eval_command" : {
+                         "type" : "bash_evaluation_command",
+                         "gold_file": SDP_prefix+name+"/dev/dev.sdp",
+                          "command" : 'java -cp '+ALTO_PATH+' de.saar.coli.amrtagging.formalisms.sdp.psd.tools.ToSDPCorpus --corpus {system_output} --gold {gold_file} --outFile {tmp}/BLABLA',
+                          "result_regexes" : {
+                                              "P" : [1, "Precision (?P<value>.+)"],
+                                              "R" : [2, "Recall (?P<value>.+)"],
+                                              "F" : [3, "F (?P<value>.+)"] #says: on line 3 (0-based), fetch the F-Score with the given regex.
+                          }
+                 }
+               }
+           } },
 
     "EDS" : { #don't use file extension for gold_file: use e.g. data/EDS/dev/dev-gold
         "callbacks" : {
