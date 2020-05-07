@@ -32,6 +32,7 @@ local sdp_evaluator(name) = {
     "after_validation" : {
                  "type" : "parse-dev",
                  "system_input" : "data/AMR/2015/dev/dev.amconll",
+                 "prefix": "AMR-2015_",
                  "eval_command" : {
                      "type" : "bash_evaluation_command",
                      "gold_file" : "data/AMR/2015/dev/goldAMR.txt",
@@ -50,6 +51,7 @@ local sdp_evaluator(name) = {
     "after_validation" : {
                  "type" : "parse-dev",
                  "system_input" : "data/AMR/2017/dev/dev.amconll",
+                 "prefix": "AMR-2017_",
                  "eval_command" : {
                      "type" : "bash_evaluation_command",
                      "gold_file" : "data/AMR/2017/dev/goldAMR.txt",
@@ -116,11 +118,11 @@ local sdp_evaluator(name) = {
     },
 
     "validation_metric" : {
-        "AMR-2015" : "+F",
-        "AMR-2017" : "+F",
-        "DM" : "+F",
-        "PAS" : "+F",
-        "PSD" : "+F",
+        "AMR-2015" : "+AMR-2015_F",
+        "AMR-2017" : "+AMR-2017_F",
+        "DM" : "+DM_F",
+        "PAS" : "+PAS_F",
+        "PSD" : "+PSD_F",
         "EDS" : "+Smatch_F"
     }
 
