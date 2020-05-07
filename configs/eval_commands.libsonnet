@@ -113,6 +113,15 @@ local sdp_evaluator(name) = {
                      }
          }
     }
+    },
+
+    "validation_metric" : {
+        "AMR-2015" : "+F",
+        "AMR-2017" : "+F",
+        "DM" : "+F",
+        "PAS" : "+F",
+        "PSD" : "+F",
+        "EDS" : "+Smatch_F"
     }
 
 }

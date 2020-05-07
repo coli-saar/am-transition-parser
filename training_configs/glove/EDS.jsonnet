@@ -206,7 +206,7 @@ local data_iterator = {
             "betas" : [0.9, 0.9]
         },
         "num_serialized_models_to_keep" : 1,
-        "validation_metric" : "+LAS"
+        "validation_metric" : eval_commands["validation_metric"][task]
     },
 
     "dataset_writer":{
