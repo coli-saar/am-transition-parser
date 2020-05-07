@@ -122,8 +122,10 @@ class LTF(TransitionSystem):
                 else:
                     to_right.append(_construct_seq(child))
             incoming_edge = tree.node[1].label
+            #beginning = [Decision(own_position, incoming_edge, (tree.node[1].fragment, tree.node[1].typ),
+            #                      tree.node[1].lexlabel, term_types[own_position-1] if incoming_edge.startswith("MOD_") else None)]
             beginning = [Decision(own_position, incoming_edge, (tree.node[1].fragment, tree.node[1].typ),
-                                  tree.node[1].lexlabel, term_types[own_position-1] if incoming_edge.startswith("MOD_") else None)]
+                                  tree.node[1].lexlabel, term_types[own_position-1])]
 
             if self.pop_with_0:
                 ending = [Decision(0, "", ("",""), "")]
@@ -244,12 +246,12 @@ class LTF(TransitionSystem):
 
                         for todo_source in self.applysets_todo[i][tos-1]:
                             req = lex_type_of_tos.get_request(todo_source)
-                            #i_req = self.typ2i[req]
+                            i_req = self.typ2i[req]
                             source_score = label_scores[i, self.additional_lexicon.get_id("edge_labels", "APP_"+todo_source)]
 
                             for lex_type in self.candidate_lex_types.get_candidates(req, words_left_before_selection):
                                 best_local_constant, best_local_constant_score = get_best_constant(self.typ2supertag[lex_type], constant_scores[i])
-                                score = source_score + best_local_constant_score #+ term_type_scores[i, i_req]
+                                score = source_score + best_local_constant_score + term_type_scores[i, i_req]
 
                                 if score >= max_apply_score:
                                     best_apply_source = todo_source
@@ -287,9 +289,9 @@ class LTF(TransitionSystem):
                                         best_modify_term_type = subtype
                                         best_modify_lex_type = lex_type
 
-                        if best_modify_source is not None:
-                            # to make a fair comparison to the APP score, don't consider the term type score.
-                            max_mod_score = label_scores[i, self.additional_lexicon.get_id("edge_labels", "MOD_"+best_modify_source)] + constant_scores[i, best_modify_constant]
+                        #if best_modify_source is not None:
+                        #    # to make a fair comparison to the APP score, don't consider the term type score.
+                        #    max_mod_score = label_scores[i, self.additional_lexicon.get_id("edge_labels", "MOD_"+best_modify_source)] + constant_scores[i, best_modify_constant]
 
                         #Make a decision on APP vs MOD
                         if max_mod_score > max_apply_score:

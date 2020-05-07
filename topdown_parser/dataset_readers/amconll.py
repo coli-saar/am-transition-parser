@@ -187,8 +187,8 @@ class AMConllDatasetReader(OrderedDatasetReader):
         fields["labels"] = SequenceLabelField([self.lexicon.get_id("edge_labels",decision.label) for decision in decisions], seq)
         fields["label_mask"] = SequenceLabelField([int(decision.label != "") for decision in decisions], seq)
 
-        fields["term_types"] = SequenceLabelField([str(decision.termtyp) if decision.termtyp is not None else "" for decision in decisions], seq,
-                                              label_namespace=formalism + "_term_types")
+        fields["term_types"] = SequenceLabelField([self.lexicon.get_id("term_types", str(decision.termtyp)) if decision.termtyp is not None else 0 for decision in decisions], seq)
+
         fields["term_type_mask"] = SequenceLabelField([int(decision.termtyp is not None) for decision in decisions], seq)
 
         fields["lex_labels"] = SequenceLabelField([self.lexicon.get_id("lex_labels", decision.lexlabel) for decision in decisions], seq)
@@ -197,6 +197,8 @@ class AMConllDatasetReader(OrderedDatasetReader):
         fields["supertags"] = SequenceLabelField([self.lexicon.get_id("constants","--TYPE--".join(decision.supertag)) for decision in decisions], seq)
 
         fields["supertag_mask"] = SequenceLabelField([int(decision.supertag[1] != "") for decision in decisions], seq)
+
+        fields["heads"] = SequenceLabelField(am_sentence.get_heads(), tokens)
 
         fields["context"] = ContextField(
             {name: ListField([ArrayField(array, dtype=array.dtype) for array in liste]) for name, liste in
