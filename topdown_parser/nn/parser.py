@@ -1,3 +1,4 @@
+import socket
 import time
 from typing import Dict, List, Any, Optional, Tuple
 
@@ -7,16 +8,18 @@ from allennlp.common.checks import ConfigurationError
 from allennlp.data import Vocabulary
 from allennlp.models import Model
 from allennlp.modules import TextFieldEmbedder, Embedding, Seq2SeqEncoder, InputVariationalDropout
-from allennlp.nn.util import get_text_field_mask, get_final_encoder_states
+from allennlp.nn.util import get_text_field_mask, get_final_encoder_states, get_range_vector, get_device_of
 from torch.nn import Dropout, Dropout2d
 
 from topdown_parser.dataset_readers.amconll_tools import AMSentence
 from topdown_parser.am_algebra.tools import is_welltyped, get_tree_type
 from topdown_parser.losses.losses import EdgeExistenceLoss
+from topdown_parser.nn import dm_edge_loss
 from topdown_parser.nn.ContextProvider import ContextProvider
 from topdown_parser.nn.DecoderCell import DecoderCell
 from topdown_parser.nn.EdgeLabelModel import EdgeLabelModel
 from topdown_parser.nn.EdgeModel import EdgeModel
+from topdown_parser.nn.kg_edge_model import KGEdges
 from topdown_parser.nn.supertagger import Supertagger
 from topdown_parser.nn.utils import get_device_id
 from topdown_parser.transition_systems.transition_system import TransitionSystem
@@ -34,6 +37,7 @@ class TopDownDependencyParser(Model):
                  transition_system : TransitionSystem,
                  edge_loss : EdgeExistenceLoss,
                  tagger_encoder : Optional[Seq2SeqEncoder] = None,
+                 kg_encoder : Optional[Seq2SeqEncoder] = None,
                  tagger_decoder : Optional[DecoderCell] = None,
                  supertagger : Optional[Supertagger] = None,
                  term_type_tagger : Optional[Supertagger] = None,
@@ -44,9 +48,12 @@ class TopDownDependencyParser(Model):
                  lemma_embedding: Embedding = None,
                  ne_embedding: Embedding = None,
                  input_dropout: float = 0.0,
-                 encoder_output_dropout : float = 0.0
+                 encoder_output_dropout : float = 0.0,
+                 additional_edge_model : Optional[KGEdges] = None,
                  ):
         super().__init__(vocab)
+        self.kg_encoder = kg_encoder
+        self.additional_edge_model = additional_edge_model
         self.term_type_tagger = term_type_tagger
         self.tagger_context_provider = tagger_context_provider
         self.tagger_decoder = tagger_decoder
@@ -77,6 +84,7 @@ class TopDownDependencyParser(Model):
 
         self._head_sentinel = torch.nn.Parameter(torch.randn([1, 1, self.encoder_output_dim]), requires_grad=True)
         self._head_sentinel_tagging = torch.nn.Parameter(torch.randn([1, 1, self.encoder_output_dim if tagger_encoder is None else self.tagger_encoder.get_output_dim()]), requires_grad=True)
+        self._head_sentinel_kg = torch.nn.Parameter(torch.randn([1, 1, self.encoder_output_dim if kg_encoder is None else kg_encoder.get_output_dim()]), requires_grad=True)
 
         self.head_decisions_correct = 0
         self.decisions = 0
@@ -99,6 +107,9 @@ class TopDownDependencyParser(Model):
         self.sentences_parsed = 0
         self.has_been_training_before = False
 
+        self.heads_correct = 0
+        self.heads_predicted = 0
+
         self.transition_system.validate_model(self)
 
     def forward(self, words: Dict[str, torch.Tensor],
@@ -117,7 +128,8 @@ class TopDownDependencyParser(Model):
                 supertags : Optional[torch.Tensor] = None,
                 supertag_mask : Optional[torch.Tensor] = None,
                 term_types : Optional[torch.Tensor] = None,
-                term_type_mask : Optional[torch.Tensor] = None) -> Dict[str, torch.Tensor]:
+                term_type_mask : Optional[torch.Tensor] = None,
+                heads : Optional[torch.Tensor] = None) -> Dict[str, torch.Tensor]:
 
         parsing_time_t0 = time.time()
 
@@ -132,7 +144,12 @@ class TopDownDependencyParser(Model):
         sentences = [ m["am_sentence"] for m in metadata]
         ret = {}
         if seq is not None and labels is not None and label_mask is not None and context is not None and self.has_been_training_before:
-            ret["loss"] = self.compute_loss(state, seq, active_nodes, labels, label_mask, supertags, supertag_mask, lex_labels, lex_label_mask, term_types, term_type_mask, context)
+            ret["loss"] = self.compute_loss(state, seq, active_nodes,
+                                                     labels, label_mask,
+                                                     supertags, supertag_mask,
+                                                     lex_labels, lex_label_mask,
+                                                     term_types, term_type_mask,
+                                                     heads, context)
 
         if not self.training:
             if "loss" in ret:
@@ -147,6 +164,7 @@ class TopDownDependencyParser(Model):
             for pred in predictions:
                 pred.attributes["normalized_parsing_time"] = str(avg_parsing_time)
                 pred.attributes["batch_size"] = str(batch_size)
+                pred.attributes["host"] = socket.gethostname()
 
             for p,g in zip(predictions, (m["am_sentence"] for m in metadata)):
                 if p.get_root() == g.get_root():
@@ -169,6 +187,46 @@ class TopDownDependencyParser(Model):
 
         return ret
 
+    def annotate_loss(self, words: Dict[str, torch.Tensor],
+                      pos_tags: torch.LongTensor,
+                      lemmas: torch.LongTensor,
+                      ner_tags: torch.LongTensor,
+                      metadata: List[Dict[str, Any]],
+                      order_metadata: List[Dict[str, Any]],
+                      seq: Optional[torch.Tensor] = None,
+                      context : Optional[Dict[str, torch.Tensor]] = None,
+                      active_nodes : Optional[torch.Tensor] = None,
+                      labels: Optional[torch.Tensor] = None,
+                      label_mask: Optional[torch.Tensor] = None,
+                      lex_labels: Optional[torch.Tensor] = None,
+                      lex_label_mask: Optional[torch.Tensor] = None,
+                      supertags : Optional[torch.Tensor] = None,
+                      supertag_mask : Optional[torch.Tensor] = None,
+                      term_types : Optional[torch.Tensor] = None,
+                      term_type_mask : Optional[torch.Tensor] = None,
+                      heads : Optional[torch.Tensor] = None) -> Dict[str, List[Any]]:
+        """
+        Same input as forward(), computes the loss of the individual sentences.
+        """
+        state = self.encode(words, pos_tags, lemmas, ner_tags)  # shape (batch_size, seq_len, encoder_dim)
+
+        # Initialize decoder
+        self.init_decoder(state)
+
+        sentence_loss = self.compute_sentence_loss(state, seq, active_nodes,
+                                            labels, label_mask,
+                                            supertags, supertag_mask,
+                                            lex_labels, lex_label_mask,
+                                            term_types, term_type_mask,
+                                            heads, context)
+        sentence_loss = sentence_loss.detach().cpu().numpy()
+        batch_size = sentence_loss.shape[0]
+
+        sentences : List[AMSentence] = [ m["am_sentence"] for m in metadata]
+        for i in range(batch_size):
+            sentences[i].attributes["loss"] = sentence_loss[i]
+        return {"predictions": sentences}
+
     def init_decoder(self, state : Dict[str, torch.Tensor]):
         batch_size = state["encoded_input"].shape[0]
         device = get_device_id(state["encoded_input"])
@@ -181,7 +239,7 @@ class TopDownDependencyParser(Model):
             self.tagger_decoder.set_hidden_state(
                 get_final_encoder_states(state["encoded_input_for_tagging"], state["input_mask"], self.encoder.is_bidirectional()))
 
-    def decoder_step(self, state : Dict[str, torch.Tensor],
+    def decoder_step(self, state : Dict[str, torch.Tensor], current_node : torch.Tensor,
                      encoding_current_node : torch.Tensor, encoding_current_node_tagging : torch.Tensor,
                      current_context : Dict[str, torch.Tensor]) \
             -> Tuple[torch.Tensor, torch.Tensor]:
@@ -194,6 +252,18 @@ class TopDownDependencyParser(Model):
         """
         if self.context_provider:
             encoding_current_node = self.context_provider.forward(encoding_current_node, state, current_context)
+
+        if state["additional_edge_scores"] is not None:
+            batch_size, input_seq_len, encoder_dim = state["encoded_input"].shape
+            head_attention = state["additional_edge_scores"][range(batch_size), :, current_node].unsqueeze(2)
+            head_attention = F.softmax(head_attention.detach(),dim=1) # stop gradient, or shouldn't we?
+            assert head_attention.shape == (batch_size, input_seq_len, 1)
+            #head_attention[i,j, 0] is the probability that the token j has the head current_node[i] in sentence i
+            head_attention_value = state["encoded_input"] * head_attention # (batch_size, input_seq_len, encoder dim)
+            head_attention_value = head_attention_value.sum(1)
+            assert head_attention_value.shape == (batch_size, encoder_dim)
+
+            encoding_current_node = torch.cat((encoding_current_node, head_attention_value), dim=1)
 
         self.decoder.step(encoding_current_node)
         decoder_hidden = self.decoder.get_hidden_state()
@@ -252,7 +322,20 @@ class TopDownDependencyParser(Model):
         else:
             tagger_encoded = encoded_text
 
-        return {"encoded_input": encoded_text, "input_mask": mask, "encoded_input_for_tagging" : tagger_encoded}
+        if self.additional_edge_model:
+            kg_encoded = self.kg_encoder(embedded_text_input, get_text_field_mask(words))
+            head_sentinel_kg = self._head_sentinel_kg.expand(batch_size, 1, tagger_encoded.shape[2])
+            kg_encoded = torch.cat([head_sentinel_kg, kg_encoded], 1)
+            kg_encoded = self._encoder_output_dropout(kg_encoded)
+            additional_edge_scores= self.additional_edge_model.edge_existence(kg_encoded, mask)
+            assert additional_edge_scores.shape == (batch_size, seq_len+1, seq_len+1)
+            # additional_edge_scores[i,j,k] is the prob. / attention score that j has head k in sentence i.
+        else:
+            additional_edge_scores = None
+
+        return {"encoded_input": encoded_text, "input_mask": mask,
+                "encoded_input_for_tagging" : tagger_encoded,
+                "additional_edge_scores" : additional_edge_scores}
 
     def common_setup_decode(self, state : Dict[str, torch.Tensor]) -> None:
         """
@@ -278,9 +361,59 @@ class TopDownDependencyParser(Model):
                      supertags : torch.Tensor, supertag_mask : torch.Tensor,
                      lex_labels : torch.Tensor, lex_label_mask : torch.Tensor,
                      term_types : Optional[torch.Tensor], term_type_mask : Optional[torch.Tensor],
+                     heads : Optional[torch.Tensor],
                      context : Dict[str, torch.Tensor]) -> torch.Tensor:
         """
         Computes the loss.
+        :param heads: shape (batch_size, number of tokens), no token for artificial root node included.
+        :param term_types: (batch_size, decision_seq_len)
+        :param lex_label_mask: (batch_size, decision_seq_len) whether there is a decision to be made for the lexical label.
+        :param lex_labels: (batch_size, decision_seq_len, vocab size) which lexical label to pick for each decision
+        :param supertag_mask: (batch_size, decision_seq_len) indicating where supertags should be predicted.
+        :param supertags: shape (batch_size, decision_seq_len, supertag vocab) which supertag to pick for each decision
+        :param context: a dictionary with key describing the context (parents, siblings) and values of shape (batch_size, decision seq len, *)
+            with additional information for each decision.
+        :param active_nodes: shape (batch_size, input_seq_len) with currently active node (e.g. top of stack)
+        :param state: state of lstm
+        :param seq: shape (batch_size, decision_seq_len) with indices which elements to pick
+        :param labels: (batch_size, decision_seq_len) gold edge labels
+        :param label_mask: (batch_size, decision_seq_len) indicating where edge labels should be predicted
+        :return: a tensor of shape (batch_size,) with the loss
+        """
+
+        batch_size, output_seq_len = seq.shape
+
+        sentence_loss = self.compute_sentence_loss(state, seq, active_nodes,
+                                                    labels, label_mask,
+                                                    supertags, supertag_mask,
+                                                    lex_labels, lex_label_mask,
+                                                    term_types, term_type_mask,
+                                                    heads, context) # shape (batch_size,)
+        sentence_loss = sentence_loss.sum() #shape (1,)
+
+        dm_loss = sentence_loss.new_zeros(1)
+        if state["additional_edge_scores"] is not None:
+            heads = torch.cat([heads.new_zeros(batch_size, 1), heads], 1) # shape (batch_size, input_seq_len) now contains artificial root
+            dm_loss = dm_edge_loss.loss(state["additional_edge_scores"], heads, state["input_mask"])
+
+            predicted_heads = self.additional_edge_model.greedy_decode_arcs(state["additional_edge_scores"], state["input_mask"])
+
+            self.heads_correct += (state["input_mask"] * (predicted_heads == heads)).sum().cpu().numpy() # TODO: remove artificial root
+            self.heads_predicted += torch.sum(state["input_mask"]).cpu().numpy()
+
+        return (sentence_loss + dm_loss) / batch_size
+
+
+    def compute_sentence_loss(self, state: Dict[str, torch.Tensor], seq: torch.Tensor, active_nodes : torch.Tensor,
+                              labels: torch.Tensor, label_mask: torch.Tensor,
+                              supertags : torch.Tensor, supertag_mask : torch.Tensor,
+                              lex_labels : torch.Tensor, lex_label_mask : torch.Tensor,
+                              term_types : Optional[torch.Tensor], term_type_mask : Optional[torch.Tensor],
+                              heads : Optional[torch.Tensor],
+                              context : Dict[str, torch.Tensor]) -> torch.Tensor:
+        """
+        Computes the loss.
+        :param heads: shape (batch_size, number of tokens), no token for artificial root node included.
         :param term_types: (batch_size, decision_seq_len)
         :param lex_label_mask: (batch_size, decision_seq_len) whether there is a decision to be made for the lexical label.
         :param lex_labels: (batch_size, decision_seq_len, vocab size) which lexical label to pick for each decision
@@ -316,13 +449,15 @@ class TopDownDependencyParser(Model):
         ones = loss.new_ones((batch_size, self.decoder_output_dim))
         dropout_mask = torch.nn.functional.dropout(ones, self.encoder_output_dropout_rate, self.training, inplace=False)
 
+        range_batch_size = get_range_vector(batch_size, get_device_id(seq)) # replaces range(batch_size)
+
         for step in range(output_seq_len - 1):
             # Retrieve current vector corresponding to current node and feed to decoder
             current_node = active_nodes[:, step]
             assert current_node.shape == (batch_size,)
 
-            encoding_current_node = state["encoded_input"][range(batch_size), current_node]
-            encoding_current_node_tagging = state["encoded_input_for_tagging"][range(batch_size), current_node]
+            encoding_current_node = state["encoded_input"][range_batch_size, current_node] # (batch_size, encoder dim)
+            encoding_current_node_tagging = state["encoded_input_for_tagging"][range_batch_size, current_node]
 
             if self.context_provider:
                 # Generate context snapshot of current time-step.
@@ -330,7 +465,7 @@ class TopDownDependencyParser(Model):
             else:
                 current_context = dict()
 
-            decoder_hidden, decoder_hidden_tagging = self.decoder_step(state, encoding_current_node, encoding_current_node_tagging, current_context)
+            decoder_hidden, decoder_hidden_tagging = self.decoder_step(state, current_node, encoding_current_node, encoding_current_node_tagging, current_context)
 
             # if self.context_provider:
             #     # Generate context snapshot of current time-step.
@@ -359,8 +494,8 @@ class TopDownDependencyParser(Model):
             self.head_decisions_correct += torch.sum(current_mask * (target_gold_edges == argmax)).cpu().numpy()
             self.decisions += torch.sum(current_mask).cpu().numpy()
 
-            #loss = loss + current_mask * (edge_scores[range(batch_size), target_gold_edges] - max_values) #TODO: check no log_softmax! TODO margin.
-            #loss = loss + current_mask * edge_scores[range(batch_size), target_gold_edges]
+            #loss = loss + current_mask * (edge_scores[range_batch_size, target_gold_edges] - max_values) #TODO: check no log_softmax! TODO margin.
+            #loss = loss + current_mask * edge_scores[range_batch_size, target_gold_edges]
             loss = loss + self.edge_loss.compute_loss(edge_scores, target_gold_edges, current_mask, state["input_mask"])
 
             #####################
@@ -371,7 +506,7 @@ class TopDownDependencyParser(Model):
                 assert edge_label_scores.shape == (batch_size, self.edge_label_model.vocab_size)
 
                 gold_labels = labels[:, step + 1]
-                edge_loss = edge_label_scores[range(batch_size), gold_labels]
+                edge_loss = edge_label_scores[range_batch_size, gold_labels]
                 assert edge_loss.shape == (batch_size,)
 
                 # We don't have to predict an edge label everywhere, so apply the appropriate mask:
@@ -413,7 +548,7 @@ class TopDownDependencyParser(Model):
 
                 loss = loss - term_type_loss
 
-        return -loss.sum() / batch_size
+        return -loss
 
     def compute_tagging_loss(self, supertagger : Supertagger, decoder_hidden_tagging : torch.Tensor, relevant_nodes_for_tagging : torch.Tensor, current_mask : torch.Tensor, current_labels : torch.Tensor) -> Tuple[torch.Tensor, int, int]:
         """
@@ -459,9 +594,11 @@ class TopDownDependencyParser(Model):
 
         all_selected_nodes = [torch.zeros(batch_size, device = device)]
 
+        range_batch_size = get_range_vector(batch_size, device)
+
         for step in range(output_seq_len):
-            encoding_current_node = state["encoded_input"][range(batch_size), next_active_nodes]
-            encoding_current_node_tagging = state["encoded_input_for_tagging"][range(batch_size), next_active_nodes]
+            encoding_current_node = state["encoded_input"][range_batch_size, next_active_nodes]
+            encoding_current_node_tagging = state["encoded_input_for_tagging"][range_batch_size, next_active_nodes]
 
             if self.context_provider:
                 # Generate context snapshot of current time-step.
@@ -469,7 +606,7 @@ class TopDownDependencyParser(Model):
             else:
                 current_context = dict()
 
-            decoder_hidden, decoder_hidden_tagging = self.decoder_step(state, encoding_current_node, encoding_current_node_tagging, current_context)
+            decoder_hidden, decoder_hidden_tagging = self.decoder_step(state, next_active_nodes,encoding_current_node, encoding_current_node_tagging, current_context)
 
             # Feed current node to decoder
             # if self.context_provider:
@@ -500,11 +637,7 @@ class TopDownDependencyParser(Model):
             edge_label_scores = self.edge_label_model.edge_label_scores(selected_nodes, decoder_hidden)
             assert edge_label_scores.shape == (batch_size, self.edge_label_model.vocab_size)
 
-            #selected_labels = torch.argmax(edge_label_scores, dim=1)
-            #assert selected_labels.shape == (batch_size,)
-
             additional_scores["edge_labels_scores"] = F.log_softmax(edge_label_scores,1)
-            #additional_scores["selected_labels"] = [ self.vocab.get_token_from_index(label_id, namespace=formalism+"_labels") for label_id in selected_labels.cpu().numpy()]
 
             #####################
             if self.transition_system.predict_supertag_from_tos():
@@ -517,26 +650,19 @@ class TopDownDependencyParser(Model):
                 supertag_scores = self.supertagger.tag_scores(decoder_hidden_tagging, relevant_nodes_for_supertagging)
                 assert supertag_scores.shape == (batch_size, self.supertagger.vocab_size)
 
-                #selected_supertag_tensor = torch.argmax(supertag_scores, dim=1) # shape (batch_size,)
                 additional_scores["constants_scores"]  = F.log_softmax(supertag_scores,1)
-                #additional_scores["selected_supertags"]  = [ self.transition_system.additional_lexicon.get_str_repr("constants", supertag_id) for supertag_id in selected_supertag_tensor.cpu().numpy()]
-                #additional_scores["selected_supertags"]  = [ self.vocab.get_token_from_index(supertag_id, namespace=formalism+"_supertags") for supertag_id in selected_supertag_tensor.cpu().numpy()]
 
             if self.lex_label_tagger is not None:
                 lex_label_scores = self.lex_label_tagger.tag_scores(decoder_hidden_tagging, relevant_nodes_for_supertagging)
                 assert lex_label_scores.shape == (batch_size, self.lex_label_tagger.vocab_size)
 
-                #selected_lex_label_tensor = torch.argmax(lex_label_scores, dim=1) # shape (batch_size,)
                 additional_scores["lex_labels_scores"] = F.log_softmax(lex_label_scores,1)
-                #additional_scores["selected_lex_labels"]  = [ self.transition_system.additional_lexicon.get_str_repr("lex_labels", label_id) for label_id in selected_lex_label_tensor.cpu().numpy()]
 
             if self.term_type_tagger is not None:
                 term_type_scores = self.term_type_tagger.tag_scores(decoder_hidden_tagging, relevant_nodes_for_supertagging)
                 assert term_type_scores.shape == (batch_size, self.term_type_tagger.vocab_size)
 
                 additional_scores["term_types_scores"] = F.log_softmax(term_type_scores, 1)
-                #selected_term_type_tensor = torch.argmax(term_type_scores, dim=1) # shape (batch_size,)
-                #additional_scores["selected_term_types"]  = [self.transition_system.additional_lexicon.get_str_repr("types", type_id) for type_id in selected_term_type_tensor.cpu().numpy()]
 
             ### Update current node according to transition system:
             next_active_nodes, valid_choices = self.transition_system.step(selected_nodes, additional_scores)
@@ -546,8 +672,6 @@ class TopDownDependencyParser(Model):
 
             if torch.all(valid_choices == 0):
                 break
-
-
 
         return self.transition_system.retrieve_parses()
 
@@ -572,6 +696,9 @@ class TopDownDependencyParser(Model):
         if self.roots_total > 0:
             r["root_acc"] = self.root_correct / self.roots_total * 100
 
+        if self.heads_predicted > 0:
+            r["head_acc"] = self.heads_correct / self.heads_predicted * 100
+
         if reset:
             self.head_decisions_correct = 0
             self.decisions = 0
@@ -588,6 +715,9 @@ class TopDownDependencyParser(Model):
             self.well_typed = 0
             self.has_empty_tree_type = 0
             self.sentences_parsed = 0
+
+            self.heads_predicted = 0
+            self.heads_correct = 0
 
         return r
 

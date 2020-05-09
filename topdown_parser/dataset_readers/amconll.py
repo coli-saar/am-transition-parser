@@ -198,7 +198,7 @@ class AMConllDatasetReader(OrderedDatasetReader):
 
         fields["supertag_mask"] = SequenceLabelField([int(decision.supertag[1] != "") for decision in decisions], seq)
 
-        #fields["heads"] = SequenceLabelField(am_sentence.get_heads(), tokens)
+        fields["heads"] = SequenceLabelField(am_sentence.get_heads(), tokens)
 
         fields["context"] = ContextField(
             {name: ListField([ArrayField(array, dtype=array.dtype) for array in liste]) for name, liste in
