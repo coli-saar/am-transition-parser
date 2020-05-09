@@ -12,6 +12,8 @@ local num_filters = 50;
 local filters = [3];
 local max_filter = 3; //KEEP IN SYNC WITH filters!
 
+local lemma_embedding = 64;
+
 local ne_embedding = 16;
 
 local lexicon = import "../../configs/lexicon.libsonnet";
@@ -61,6 +63,12 @@ local data_iterator = {
     "dataset_reader": dataset_reader,
     "validation_dataset_reader" : dataset_reader,
 
+     "vocabulary" : {
+            "min_count" : {
+            "lemmas" : 7
+           }
+     },
+
     "validation_command" : eval_commands["general_validation"],
 
     "iterator": data_iterator,
@@ -105,7 +113,7 @@ local data_iterator = {
 
         "encoder" : {
              "type": "stacked_bidirectional_lstm",
-            "input_size": num_filters + word_dim + pos_embedding + ne_embedding,
+            "input_size": num_filters + word_dim + pos_embedding + ne_embedding + lemma_embedding,
             "hidden_size": encoder_dim,
             "num_layers" : 3,
             "recurrent_dropout_probability" : 0.33,
@@ -114,7 +122,7 @@ local data_iterator = {
 
         "tagger_encoder" : {
              "type": "stacked_bidirectional_lstm",
-            "input_size": num_filters + word_dim + pos_embedding + ne_embedding,
+            "input_size": num_filters + word_dim + pos_embedding + ne_embedding + lemma_embedding,
             "hidden_size": encoder_dim,
             "num_layers" : 2,
             "recurrent_dropout_probability" : 0.33,
@@ -183,6 +191,11 @@ local data_iterator = {
         "ne_embedding" : {
             "embedding_dim" : ne_embedding,
             "vocab_namespace" : "ner"
+        },
+
+        "lemma_embedding" : {
+            "embedding_dim" : lemma_embedding,
+            "vocab_namespace" : "lemmas"
         }
 
     },

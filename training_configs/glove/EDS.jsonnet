@@ -12,7 +12,7 @@ local num_filters = 50;
 local filters = [3];
 local max_filter = 3; //KEEP IN SYNC WITH filters!
 
-local lemma_embedding = 100;
+local lemma_embedding = 64;
 
 local ne_embedding = 16;
 
@@ -62,6 +62,12 @@ local data_iterator = {
 {
     "dataset_reader": dataset_reader,
     "validation_dataset_reader" : dataset_reader,
+
+     "vocabulary" : {
+            "min_count" : {
+            "lemmas" : 7
+           }
+     },
 
     "validation_command" : eval_commands["general_validation"],
 
