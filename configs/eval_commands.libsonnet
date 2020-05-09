@@ -5,6 +5,14 @@ local tool_dir = "evaluation_tools/";
 local data_paths = import 'data_paths.libsonnet';
 local SDP_prefix = data_paths["SDP_prefix"];
 
+local parse_test = true;
+
+local SDP_regex = {
+      "P" : [1, "Precision (?P<value>.+)"],
+      "R" : [2, "Recall (?P<value>.+)"],
+      "F" : [3, "F (?P<value>.+)"] #says: on line 3 (0-based), fetch the F-Score with the given regex.}
+} ;
+
 local sdp_evaluator(name) = {
     "callbacks" : {
         "after_validation" : {
@@ -15,13 +23,30 @@ local sdp_evaluator(name) = {
                  "type" : "bash_evaluation_command",
                  "gold_file": SDP_prefix+name+"/dev/dev.sdp",
                   "command" : 'java -cp '+ALTO_PATH+' de.saar.coli.amrtagging.formalisms.sdp.dm.tools.ToSDPCorpus --corpus {system_output} --gold {gold_file} --outFile {tmp}/BLABLA',
-                  "result_regexes" : {
-                                      "P" : [1, "Precision (?P<value>.+)"],
-                                      "R" : [2, "Recall (?P<value>.+)"],
-                                      "F" : [3, "F (?P<value>.+)"] #says: on line 3 (0-based), fetch the F-Score with the given regex.
-                  }
+                  "result_regexes" : SDP_regex
          }
-       }
+       },
+
+       "after_training" : {
+           "type" : "parse-test",
+           "system_inputs" : [SDP_prefix+name+"/test.id/test.id.amconll", SDP_prefix+name+"/test.ood/test.ood.amconll"],
+            "names" : [name+"_id", name+"_ood"],
+            "active" : parse_test,
+            "test_commands" : [
+                {
+                "type" : "bash_evaluation_command",
+                "gold_file": SDP_prefix+name+"/test.id/en.id."+std.asciiLower(name)+".sdp",
+                 "command" : 'java -cp '+ALTO_PATH+' de.saar.coli.amrtagging.formalisms.sdp.dm.tools.ToSDPCorpus --corpus {system_output} --gold {gold_file} --outFile {tmp}/BLABLA',
+                 "result_regexes" : SDP_regex
+                 },
+                 {
+                 "type" : "bash_evaluation_command",
+                 "gold_file": SDP_prefix+name+"/test.ood/en.ood."+std.asciiLower(name)+".sdp",
+                  "command" : 'java -cp '+ALTO_PATH+' de.saar.coli.amrtagging.formalisms.sdp.dm.tools.ToSDPCorpus --corpus {system_output} --gold {gold_file} --outFile {tmp}/BLABLA',
+                  "result_regexes" : SDP_regex
+                 }
+        ]
+      }
    }
 
 };
@@ -43,7 +68,27 @@ local sdp_evaluator(name) = {
                                          "R" : [1, "Recall: (?P<value>.+)"],
                                          "F" : [2, "F-score: (?P<value>.+)"]}
              }
-  }}
+  },
+   "after_training" : {
+        "type" : "parse-test",
+        "system_inputs" : ["data/AMR/2015/test/test.amconll"],
+        "names" : ["AMR-2015"],
+        "active" : parse_test,
+        "test_commands" : [
+            {
+             "type" : "bash_evaluation_command",
+             "gold_file" : "data/AMR/2015/test/goldAMR.txt",
+              "command" : 'java -cp '+ALTO_PATH+' de.saar.coli.amrtagging.formalisms.amr.tools.EvaluateCorpus --corpus {system_output} -o {tmp}/ --relabel --wn '+WORDNET+
+                  ' --lookup data/AMR/2015/lookup/ --th 10' +
+              '&& python2 '+tool_dir+'/smatch/smatch.py -f {tmp}/parserOut.txt {gold_file} --pr --significant 4 > {tmp}/metrics.txt && cat {tmp}/metrics.txt',
+              "result_regexes" : {"P" : [0, "Precision: (?P<value>.+)"],
+                                  "R" : [1, "Recall: (?P<value>.+)"],
+                                  "F" : [2, "F-score: (?P<value>.+)"]}
+            }
+        ]
+   }
+
+  }
 },
 
  "AMR-2017" : {
@@ -62,7 +107,26 @@ local sdp_evaluator(name) = {
                                          "R" : [1, "Recall: (?P<value>.+)"],
                                          "F" : [2, "F-score: (?P<value>.+)"]}
              }
-  }}
+  },
+     "after_training" : {
+          "type" : "parse-test",
+          "system_inputs" : ["data/AMR/2017/test/test.amconll"],
+          "names" : ["AMR-2017"],
+          "active" : parse_test,
+          "test_commands" : [
+              {
+               "type" : "bash_evaluation_command",
+               "gold_file" : "data/AMR/2017/test/goldAMR.txt",
+                "command" : 'java -cp '+ALTO_PATH+' de.saar.coli.amrtagging.formalisms.amr.tools.EvaluateCorpus --corpus {system_output} -o {tmp}/ --relabel --wn '+WORDNET+
+                    ' --lookup data/AMR/2017/lookup/ --th 10' +
+                '&& python2 '+tool_dir+'/smatch/smatch.py -f {tmp}/parserOut.txt {gold_file} --pr --significant 4 > {tmp}/metrics.txt && cat {tmp}/metrics.txt',
+                "result_regexes" : {"P" : [0, "Precision: (?P<value>.+)"],
+                                    "R" : [1, "Recall: (?P<value>.+)"],
+                                    "F" : [2, "F-score: (?P<value>.+)"]}
+              }
+          ]
+     }
+  }
 },
 
 "general_validation" : {
@@ -88,14 +152,30 @@ local sdp_evaluator(name) = {
                          "type" : "bash_evaluation_command",
                          "gold_file": SDP_prefix+"PSD/dev/dev.sdp",
                           "command" : 'java -cp '+ALTO_PATH+' de.saar.coli.amrtagging.formalisms.sdp.psd.tools.ToSDPCorpus --corpus {system_output} --gold {gold_file} --outFile {tmp}/BLABLA',
-                          "result_regexes" : {
-                                              "P" : [1, "Precision (?P<value>.+)"],
-                                              "R" : [2, "Recall (?P<value>.+)"],
-                                              "F" : [3, "F (?P<value>.+)"] #says: on line 3 (0-based), fetch the F-Score with the given regex.
-                          }
+                          "result_regexes" : SDP_regex
                  }
-               }
-           } },
+               },
+              "after_training" : {
+                  "type" : "parse-test",
+                  "system_inputs" : [SDP_prefix+"PSD/test.id/test.id.amconll", SDP_prefix+"PSD/test.ood/test.ood.amconll"],
+                   "names" : ["PSD_id", "PSD_ood"],
+                   "active" : parse_test,
+                   "test_commands" : [
+                       {
+                       "type" : "bash_evaluation_command",
+                       "gold_file": SDP_prefix+"PSD/test.id/en.id.psd.sdp",
+                        "command" : 'java -cp '+ALTO_PATH+' de.saar.coli.amrtagging.formalisms.sdp.psd.tools.ToSDPCorpus --corpus {system_output} --gold {gold_file} --outFile {tmp}/BLABLA',
+                        "result_regexes" : SDP_regex
+                        },
+                        {
+                        "type" : "bash_evaluation_command",
+                        "gold_file": SDP_prefix+"PSD/test.ood/en.ood.psd.sdp",
+                         "command" : 'java -cp '+ALTO_PATH+' de.saar.coli.amrtagging.formalisms.sdp.psd.tools.ToSDPCorpus --corpus {system_output} --gold {gold_file} --outFile {tmp}/BLABLA',
+                         "result_regexes" : SDP_regex
+                        }
+               ]
+             }
+ } },
 
     "EDS" : { #don't use file extension for gold_file: use e.g. data/EDS/dev/dev-gold
         "callbacks" : {
@@ -113,7 +193,26 @@ local sdp_evaluator(name) = {
                                             "Smatch_F" : [2, "F-score: (?P<value>.+)"],
                                             "EDM_F" : [4,"F1-score: (?P<value>.+)"]}
                      }
-         }
+         },
+      "after_training" : {
+               "type" : "parse-test",
+               "system_inputs" : ["data/EDS/test/test.amconll"],
+               "names" : ["EDS"],
+               "active" : parse_test,
+               "test_commands" : [
+                  {
+                        "type" : "bash_evaluation_command",
+                        "gold_file": "data/EDS/test/test-gold",
+                        "command" : 'java -cp '+ALTO_PATH+' de.saar.coli.amrtagging.formalisms.eds.tools.EvaluateCorpus --corpus {system_output} --outFile {tmp}/output.eds'+
+                        '&& python2 '+tool_dir+'/fast_smatch/fast_smatch.py -f {tmp}/output.eds.amr.txt {gold_file}.amr.txt --pr > {tmp}/metrics.txt'+
+                        '&& python2 '+tool_dir+'/edm/eval_edm.py {tmp}/output.eds.edm {gold_file}.edm >> {tmp}/metrics.txt && cat {tmp}/metrics.txt',
+                        "result_regexes" : {"Smatch_P" : [0, "Precision: (?P<value>.+)"],
+                                            "Smatch_R" : [1, "Recall: (?P<value>.+)"],
+                                            "Smatch_F" : [2, "F-score: (?P<value>.+)"],
+                                            "EDM_F" : [4,"F1-score: (?P<value>.+)"]}
+                     }
+               ]
+          }
     }
     },
 
