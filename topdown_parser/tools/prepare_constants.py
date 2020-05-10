@@ -67,17 +67,22 @@ for unknown_type in term_types - lexical_types:
     invented += 1
 
 # Closure under requests:
-all_requests = set()
-for typ in all_types:
-    for node in typ.nodes():
-        all_requests.add(typ.get_request(node))
 
+changed = True
 print("Checking for closure under requests...")
-for unknown_type in all_requests - all_types:
-    print("Invented", invent_supertag(unknown_type))
-    supertags[unknown_type] = {invent_supertag(unknown_type)}
-    invented += 1
-all_types.update(all_requests)
+while changed:
+    changed = False
+    all_requests = set()
+    for typ in all_types:
+        for node in typ.nodes():
+            all_requests.add(typ.get_request(node))
+
+    for unknown_type in all_requests - all_types:
+        print("Invented", invent_supertag(unknown_type))
+        supertags[unknown_type] = {invent_supertag(unknown_type)}
+        invented += 1
+        changed = True
+    all_types.update(all_requests)
 
 # Mod sources
 print("Identified the following mod sources", mod_sources)
