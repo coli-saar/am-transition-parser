@@ -249,6 +249,26 @@ class ConcatContextProver(ContextProvider):
 
         return self.mlp(torch.cat(contexts, dim=1))
 
+@ContextProvider.register("plain-concat")
+class PlainConcatContextProver(ContextProvider):
+    """
+    Concatenate additional information together.
+    """
+
+    def __init__(self, providers : List[ContextProvider]):
+        super().__init__()
+        self.providers = providers
+        for i, p in enumerate(providers):
+            self.add_module("_plain_concat_context_provider_"+str(i), p)
+
+    def forward(self, current_node : torch.Tensor, state : Dict[str, torch.Tensor], context : Dict[str, torch.Tensor]) -> torch.Tensor:
+        contexts = [current_node] #shape (batch_size, some dimension)
+
+        for provider in self.providers:
+            contexts.append(provider.compute_context(state, context))
+
+        return torch.cat(contexts, dim=1)
+
 
 @ContextProvider.register("label-embedder")
 class LabelContextProvider(ContextProvider):
