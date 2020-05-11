@@ -84,7 +84,11 @@ class TopDownDependencyParser(Model):
 
         self._head_sentinel = torch.nn.Parameter(torch.randn([1, 1, self.encoder_output_dim]), requires_grad=True)
         self._head_sentinel_tagging = torch.nn.Parameter(torch.randn([1, 1, self.encoder_output_dim if tagger_encoder is None else self.tagger_encoder.get_output_dim()]), requires_grad=True)
-        self._head_sentinel_kg = torch.nn.Parameter(torch.randn([1, 1, self.encoder_output_dim if kg_encoder is None else kg_encoder.get_output_dim()]), requires_grad=True)
+
+        if kg_encoder is not None:
+            self._head_sentinel_kg = torch.nn.Parameter(torch.randn([1, 1, self.encoder_output_dim if kg_encoder is None else kg_encoder.get_output_dim()]), requires_grad=True)
+        else:
+            self._head_sentinel_kg = None
 
         self.head_decisions_correct = 0
         self.decisions = 0
