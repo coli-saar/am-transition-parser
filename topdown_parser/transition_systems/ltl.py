@@ -282,7 +282,7 @@ class LTL(TransitionSystem):
                             smallest_apply_set = np.inf
                             for term_typ in self.term_types[i][tos-1]:
                                 for lexical_type, apply_set in self.candidate_lex_types.get_candidates_with_apply_set(term_typ,
-                                                self.applysets_collected[i][tos-1], words_left + len(self.applysets_collected[i][tos-1])):
+                                                self.applysets_collected[i][tos-1], words_left + len(self.applysets_collected[i][tos-1])): #TODO self.words_left[i]? Doesn't matter because of taking minimum.
 
                                     rest_of_apply_set = apply_set - self.applysets_collected[i][tos-1]
                                     smallest_apply_set = min(smallest_apply_set, len(rest_of_apply_set))

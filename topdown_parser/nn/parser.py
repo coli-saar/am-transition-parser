@@ -584,7 +584,7 @@ class TopDownDependencyParser(Model):
 
         self.common_setup_decode(state)
 
-        INF = 100
+        INF = 10e10
         inverted_input_mask = INF * (1-state["input_mask"])
 
         self.transition_system.reset_parses(sentences, input_seq_len)
