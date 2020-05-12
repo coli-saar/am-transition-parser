@@ -20,15 +20,17 @@ local eval_commands = import "eval_commands.libsonnet";
 local additional_lexicon = {
      "sublexica" : {
             "edge_labels" : "data/AMR/2015/train/edges.txt",
-            "lexical_types" : "data/AMR/2015/train/types.txt"
+            "constants" : "data/AMR/2015/train/constants.txt",
+            "term_types" : "data/AMR/2015/train/types.txt",
+            "lex_labels" : "data/AMR/2015/train/lex_labels.txt"
      }
 } ;
 
 local transition_system = {
-    "type" : "dfs-children-first",
+//    "type" : "dfs-children-first",
 //    "children_order" : "IO",
 //    "reverse_push_actions" : false
-//    "type" : "dfs",
+    "type" : "ltl",
     "children_order" : "IO",
     "pop_with_0" : true,
     "additional_lexicon" : additional_lexicon,
@@ -67,7 +69,7 @@ local data_iterator = {
     "validation_command" : {
 
         "type" : "bash_evaluation_command",
-        "command" : "python topdown_parser/evaluation/am_dep_las.py {gold_file} {system_output}",
+        "command" : "python3 topdown_parser/evaluation/am_dep_las.py {gold_file} {system_output}",
 
         "result_regexes" : {
             "Constant_Acc" : [4, "Supertagging acc % (?P<value>[0-9.]+)"],
@@ -91,7 +93,12 @@ local data_iterator = {
         "context_provider" : {
             "type" : "sum",
             "providers" : [
-//                  {"type" : "type-embedder", "hidden_dim" : 2*encoder_dim, "additional_lexicon" : additional_lexicon }
+//                  {"type" : "type-embedder", "hidden_dim" : 2*encoder_dim, "additional_lexicon" : additional_lexicon },
+//                                { "type" : "last-label-embedder",
+//                                "additional_lexicon" : additional_lexicon,
+//                                "hidden_dim" : 2*encoder_dim
+//                                "dropout" : 0.2
+//                                },
                   {"type" : "most-recent-child" }
             ]
         },
@@ -105,8 +112,8 @@ local data_iterator = {
         "supertagger" : {
             "type" : "combined-tagger",
 //            "type" : "no-decoder-tagger",
-            "formalism" : "amr",
-            "suffix_namespace" : "supertags",
+            "lexicon" : additional_lexicon,
+            "namespace" : "constants",
             "mlp" : {
                 "input_dim" : 2*2*encoder_dim,
 //                "input_dim" : 2*encoder_dim,
@@ -120,8 +127,8 @@ local data_iterator = {
         "lex_label_tagger" : {
             "type" : "combined-tagger",
 //            "type" : "no-decoder-tagger",
-            "formalism" : "amr",
-            "suffix_namespace" : "lex_labels",
+            "lexicon" : additional_lexicon,
+            "namespace" : "lex_labels",
             "mlp" : {
                 "input_dim" : 2*2*encoder_dim,
 //                "input_dim" : 2*encoder_dim,
@@ -131,6 +138,19 @@ local data_iterator = {
                 "activations" : "tanh",
             }
         },
+
+//        "term_type_tagger" : {
+//            "type" : "combined-tagger",
+//            "lexicon" : additional_lexicon,
+//            "namespace" : "term_types",
+//            "mlp" : {
+//                "input_dim" : 2*2*encoder_dim,
+//                "num_layers" : 1,
+//                "hidden_dims" : 1024,
+//                "dropout" : 0.0,
+//                "activations" : "tanh",
+//            }
+//        },
 
         "encoder" : {
             "type" : "lstm",
@@ -202,7 +222,7 @@ local data_iterator = {
         "edge_label_model" : {
             #"type" : "ma",
             "type" : "simple",
-            "formalism" : "amr",
+            "lexicon" : additional_lexicon,
             "mlp" : {
                 #"input_dim" : 2*encoder_dim,
                 "input_dim" : 2*2*encoder_dim,
@@ -235,6 +255,7 @@ local data_iterator = {
             "betas" : [0.9, 0.9]
         },
         "num_serialized_models_to_keep" : 1,
+        "epochs_before_validate" : 2,
         "validation_metric" : "+LAS"
     },
 
