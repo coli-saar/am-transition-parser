@@ -61,6 +61,7 @@ class TransitionSystem(Registrable):
         """
         raise NotImplementedError()
 
+
     def get_additional_choices(self, decision : Decision) -> Dict[str, List[str]]:
         """
         Turn a decision into a dictionary of additional choices (beyond the node that is selected)
