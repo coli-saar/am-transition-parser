@@ -156,6 +156,20 @@ class AMSentence:
                                  "_", 0, "IGNORE", word.aligned, word.range)
                            for word in self.words],self.attributes)
 
+    def children_dict(self) -> Dict[int, List[int]]:
+        """
+        Return dictionary of children, 1-based.
+        :return:
+        """
+        r = dict()
+        for i in range(len(self.words)):
+            head = self.words[i].head # head is 1-based
+            if self.words[i].label != "IGNORE":
+                if head not in r:
+                    r[head] = []
+                r[head].append(i+1) #make current position 1-based
+        return r
+
     def get_root(self) -> Optional[int]:
         """
         Returns the index of the root, 0-based.
