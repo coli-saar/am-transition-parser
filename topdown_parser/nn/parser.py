@@ -8,8 +8,7 @@ from allennlp.common.checks import ConfigurationError
 from allennlp.data import Vocabulary
 from allennlp.models import Model
 from allennlp.modules import TextFieldEmbedder, Embedding, Seq2SeqEncoder, InputVariationalDropout
-from allennlp.nn.util import get_text_field_mask, get_final_encoder_states, get_range_vector, get_device_of
-from torch.nn import Dropout, Dropout2d
+from allennlp.nn.util import get_text_field_mask, get_final_encoder_states, get_range_vector, batch_tensor_dicts
 
 from topdown_parser.dataset_readers.amconll_tools import AMSentence
 from topdown_parser.am_algebra.tools import is_welltyped, get_tree_type
@@ -21,8 +20,9 @@ from topdown_parser.nn.EdgeLabelModel import EdgeLabelModel
 from topdown_parser.nn.EdgeModel import EdgeModel
 from topdown_parser.nn.kg_edge_model import KGEdges
 from topdown_parser.nn.supertagger import Supertagger
-from topdown_parser.nn.utils import get_device_id
-from topdown_parser.transition_systems.transition_system import TransitionSystem
+from topdown_parser.nn.utils import get_device_id, index_tensor_dict, batch_and_pad_tensor_dict, expand_tensor_dict
+from topdown_parser.transition_systems.parsing_state import undo_one_batching, ParsingState
+from topdown_parser.transition_systems.transition_system import TransitionSystem, Decision
 
 
 @Model.register("topdown")
@@ -50,8 +50,10 @@ class TopDownDependencyParser(Model):
                  input_dropout: float = 0.0,
                  encoder_output_dropout : float = 0.0,
                  additional_edge_model : Optional[KGEdges] = None,
+                 k_best : int = 1,
                  ):
         super().__init__(vocab)
+        self.k_best = k_best
         self.kg_encoder = kg_encoder
         self.additional_edge_model = additional_edge_model
         self.term_type_tagger = term_type_tagger
@@ -161,7 +163,11 @@ class TopDownDependencyParser(Model):
                 self.init_decoder(state)
 
             sentences = [s.strip_annotation() for s in sentences]
-            predictions = self.parse_sentences(state, metadata[0]["formalism"], sentences)
+            if self.k_best <= 1:
+                predictions = self.parse_sentences(state, metadata[0]["formalism"], sentences)
+            else:
+                predictions = self.beam_search(state, sentences, self.k_best)
+
             parsing_time_t1 = time.time()
             avg_parsing_time = (parsing_time_t1 - parsing_time_t0) / batch_size
 
@@ -447,7 +453,7 @@ class TopDownDependencyParser(Model):
         assert torch.all(seq[:, 0] == 0), "The first node in the traversal must be the artificial root with index 0"
 
         if self.context_provider:
-            self.transition_system.undo_one_batching(context)
+            undo_one_batching(context)
 
         #Dropout mask for output of decoder
         ones = loss.new_ones((batch_size, self.decoder_output_dim))
@@ -585,20 +591,15 @@ class TopDownDependencyParser(Model):
         self.common_setup_decode(state)
 
         INF = 10e10
-        inverted_input_mask = INF * (1-state["input_mask"])
-
-        self.transition_system.reset_parses(sentences, input_seq_len)
+        inverted_input_mask = INF * (1-state["input_mask"]) #shape (batch_size, input_seq_len)
 
         output_seq_len = input_seq_len*2 + 1
 
         next_active_nodes = torch.zeros(batch_size, dtype=torch.long, device = device) #start with artificial root.
 
-        valid_choices = torch.ones((batch_size, input_seq_len), device = device)
-        valid_choices[:, 0] = 0 # cannot choose node 0 directly --> no parsing would happen. TODO remove this hack and integrate cleanly.
-
-        all_selected_nodes = [torch.zeros(batch_size, device = device)]
-
         range_batch_size = get_range_vector(batch_size, device)
+
+        parsing_states = [self.transition_system.initial_state(sentence, None) for sentence in sentences]
 
         for step in range(output_seq_len):
             encoding_current_node = state["encoded_input"][range_batch_size, next_active_nodes]
@@ -606,20 +607,13 @@ class TopDownDependencyParser(Model):
 
             if self.context_provider:
                 # Generate context snapshot of current time-step.
-                current_context = self.transition_system.gather_context(next_active_nodes)
+                current_context : List[Dict[str, torch.Tensor]] = [parsing_states[i].gather_context(device) for i in range(batch_size)]
+                current_context = batch_and_pad_tensor_dict(current_context)
             else:
                 current_context = dict()
 
             decoder_hidden, decoder_hidden_tagging = self.decoder_step(state, next_active_nodes,encoding_current_node, encoding_current_node_tagging, current_context)
 
-            # Feed current node to decoder
-            # if self.context_provider:
-            #     # Generate context snapshot
-            #     current_context = self.transition_system.gather_context(next_active_nodes)
-            #     encoding_current_node = self.context_provider.forward(encoding_current_node, state, current_context)
-            #
-            # self.decoder.step(encoding_current_node)
-            # decoder_hidden = self.decoder.get_hidden_state()
             assert decoder_hidden.shape == (batch_size, self.decoder_output_dim)
 
             #####################
@@ -628,20 +622,21 @@ class TopDownDependencyParser(Model):
             assert edge_scores.shape == (batch_size, input_seq_len)
 
             # Apply filtering of valid choices:
-            edge_scores = edge_scores - inverted_input_mask - INF*(1-valid_choices)
+            edge_scores = edge_scores - inverted_input_mask #- INF*(1-valid_choices)
 
             selected_nodes = torch.argmax(edge_scores, dim=1)
-            assert selected_nodes.shape == (batch_size,)
-            all_selected_nodes.append(selected_nodes)
+            # assert selected_nodes.shape == (batch_size,)
+            # all_selected_nodes.append(selected_nodes)
 
             #####################
-            additional_scores : Dict[str, torch.Tensor] = dict()
+            scores : Dict[str, torch.Tensor] = {"children_scores": edge_scores, "max_children" : selected_nodes.unsqueeze(1),
+                                                "inverted_input_mask" : inverted_input_mask}
 
-            # Compute edge label scores
+            # Compute edge label scores, perhaps they are useful to parsing procedure, perhaps it has to recompute.
             edge_label_scores = self.edge_label_model.edge_label_scores(selected_nodes, decoder_hidden)
             assert edge_label_scores.shape == (batch_size, self.edge_label_model.vocab_size)
 
-            additional_scores["edge_labels_scores"] = F.log_softmax(edge_label_scores,1)
+            scores["edge_labels_scores"] = F.log_softmax(edge_label_scores,1)
 
             #####################
             if self.transition_system.predict_supertag_from_tos():
@@ -654,30 +649,175 @@ class TopDownDependencyParser(Model):
                 supertag_scores = self.supertagger.tag_scores(decoder_hidden_tagging, relevant_nodes_for_supertagging)
                 assert supertag_scores.shape == (batch_size, self.supertagger.vocab_size)
 
-                additional_scores["constants_scores"]  = F.log_softmax(supertag_scores,1)
+                scores["constants_scores"] = F.log_softmax(supertag_scores,1)
 
             if self.lex_label_tagger is not None:
                 lex_label_scores = self.lex_label_tagger.tag_scores(decoder_hidden_tagging, relevant_nodes_for_supertagging)
                 assert lex_label_scores.shape == (batch_size, self.lex_label_tagger.vocab_size)
 
-                additional_scores["lex_labels_scores"] = F.log_softmax(lex_label_scores,1)
+                scores["lex_labels_scores"] = F.log_softmax(lex_label_scores,1)
 
             if self.term_type_tagger is not None:
                 term_type_scores = self.term_type_tagger.tag_scores(decoder_hidden_tagging, relevant_nodes_for_supertagging)
                 assert term_type_scores.shape == (batch_size, self.term_type_tagger.vocab_size)
 
-                additional_scores["term_types_scores"] = F.log_softmax(term_type_scores, 1)
+                scores["term_types_scores"] = F.log_softmax(term_type_scores, 1)
 
             ### Update current node according to transition system:
-            next_active_nodes, valid_choices = self.transition_system.step(selected_nodes, additional_scores)
-            assert next_active_nodes.shape == (batch_size,)
-            assert valid_choices.shape == (batch_size, input_seq_len)
-            valid_choices = valid_choices.to(get_device_id(edge_label_scores))
+            active_nodes = []
+            for i, parsing_state in enumerate(parsing_states):
+                decision = self.transition_system.make_decision(index_tensor_dict(scores,i), self.edge_label_model, parsing_state)
+                parsing_states[i] = self.transition_system.step(parsing_state, decision, in_place = True)
+                active_nodes.append(parsing_states[i].active_node)
 
-            if torch.all(valid_choices == 0):
+            next_active_nodes = torch.tensor(active_nodes, dtype=torch.long, device=device)
+
+            assert next_active_nodes.shape == (batch_size,)
+
+            if all(parsing_state.is_complete() for parsing_state in parsing_states):
                 break
 
-        return self.transition_system.retrieve_parses()
+        return [state.extract_tree() for state in parsing_states]
+
+
+    def beam_search(self, encoder_state: Dict[str, torch.Tensor], sentences: List[AMSentence], k : int) -> List[AMSentence]:
+        """
+        Parses the sentences.
+        :param sentences:
+        :param encoder_state:
+        :return:
+        """
+        batch_size, input_seq_len, encoder_dim = encoder_state["encoded_input"].shape
+        device = get_device_id(encoder_state["encoded_input"])
+
+        self.common_setup_decode(encoder_state)
+
+        INF = 10e10
+        inverted_input_mask = INF * (1 - encoder_state["input_mask"]) #shape (batch_size, input_seq_len)
+
+        output_seq_len = input_seq_len*2 + 1
+
+        next_active_nodes = torch.zeros(batch_size, dtype=torch.long, device = device) #start with artificial root.
+
+        range_batch_size = get_range_vector(batch_size, device)
+
+        parsing_states : List[List[ParsingState]] = []
+        for sentence, decoder_state in zip(sentences, self.decoder.get_full_states()):
+            parsing_states.append([self.transition_system.initial_state(sentence, decoder_state) for _ in range(k)])
+
+        # Every key in encoder_state has the dimensions (batch_size, ....)
+        # We now replace that by (k*batch_size, ...) where we repeat each batch element k times.
+        encoder_states = expand_tensor_dict(encoder_state)
+        k_times = []
+        for s in encoder_state:
+            for _ in range(k):
+                k_times.append(s)
+        encoder_state = batch_tensor_dicts(encoder_states) # shape (k*batch_size, ...)
+
+        assumes_greedy_ok = self.transition_system.assumes_greedy_ok()
+        condition_on = set()
+        if self.context_provider is not None:
+            condition_on = set(self.context_provider.conditions_on())
+        if self.tagger_context_provider is not None:
+            condition_on.update(self.tagger_context_provider.conditions_on())
+
+        if len(assumes_greedy_ok & condition_on):
+            raise ConfigurationError(f"You chose a beam search algorithm that assumes making greedy decisions in terms of {assumes_greedy_ok}"
+                                     f"won't impact future decisions but your context provider includes information about {condition_on}")
+
+        for step in range(output_seq_len):
+            encoding_current_node = encoder_state["encoded_input"][range_batch_size, next_active_nodes]
+            encoding_current_node_tagging = encoder_state["encoded_input_for_tagging"][range_batch_size, next_active_nodes]
+
+            if self.context_provider:
+                # Generate context snapshot of current time-step.
+                current_context : List[Dict[str, torch.Tensor]] = []
+                for sentence_states in parsing_states:
+                    current_context.extend([state.gather_context(device) for state in sentence_states])
+                current_context = batch_and_pad_tensor_dict(current_context)
+            else:
+                current_context = dict()
+
+            decoder_hidden, decoder_hidden_tagging = self.decoder_step(encoder_state, next_active_nodes, encoding_current_node, encoding_current_node_tagging, current_context)
+
+            assert decoder_hidden.shape == (batch_size, self.decoder_output_dim)
+
+            #####################
+            # Predict edges
+            edge_scores = self.edge_model.edge_scores(decoder_hidden)
+            assert edge_scores.shape == (batch_size, input_seq_len)
+
+            # Apply filtering of valid choices:
+            edge_scores = edge_scores - inverted_input_mask #- INF*(1-valid_choices)
+
+            selected_nodes = torch.argmax(edge_scores, dim=1)
+            # assert selected_nodes.shape == (batch_size,)
+            # all_selected_nodes.append(selected_nodes)
+
+            #####################
+            scores : Dict[str, torch.Tensor] = {"children_scores": edge_scores, "max_children" : selected_nodes.unsqueeze(1),
+                                                "inverted_input_mask" : inverted_input_mask}
+
+            # Compute edge label scores, perhaps they are useful to parsing procedure, perhaps it has to recompute.
+            edge_label_scores = self.edge_label_model.edge_label_scores(selected_nodes, decoder_hidden)
+            assert edge_label_scores.shape == (batch_size, self.edge_label_model.vocab_size)
+
+            scores["edge_labels_scores"] = F.log_softmax(edge_label_scores,1)
+
+            #####################
+            if self.transition_system.predict_supertag_from_tos():
+                relevant_nodes_for_supertagging = next_active_nodes
+            else:
+                relevant_nodes_for_supertagging = selected_nodes
+
+            #Compute supertags:
+            if self.supertagger is not None:
+                supertag_scores = self.supertagger.tag_scores(decoder_hidden_tagging, relevant_nodes_for_supertagging)
+                assert supertag_scores.shape == (batch_size, self.supertagger.vocab_size)
+
+                scores["constants_scores"] = F.log_softmax(supertag_scores,1)
+
+            if self.lex_label_tagger is not None:
+                lex_label_scores = self.lex_label_tagger.tag_scores(decoder_hidden_tagging, relevant_nodes_for_supertagging)
+                assert lex_label_scores.shape == (batch_size, self.lex_label_tagger.vocab_size)
+
+                scores["lex_labels_scores"] = F.log_softmax(lex_label_scores,1)
+
+            if self.term_type_tagger is not None:
+                term_type_scores = self.term_type_tagger.tag_scores(decoder_hidden_tagging, relevant_nodes_for_supertagging)
+                assert term_type_scores.shape == (batch_size, self.term_type_tagger.vocab_size)
+
+                scores["term_types_scores"] = F.log_softmax(term_type_scores, 1)
+
+            ### Update current node according to transition system:
+            active_nodes = []
+            for sentence_id, sentence in enumerate(parsing_states):
+                all_decisions_for_sentence = []
+                for i, parsing_state in enumerate(sentence):
+                    top_k : List[Decision] = self.transition_system.top_k_decision(index_tensor_dict(scores,i), self.edge_label_model, parsing_state, k)
+                    for decision in top_k:
+                        all_decisions_for_sentence.append((decision, parsing_state))
+                # Find top k overall decisions
+                all_decisions_for_sentence = sorted(all_decisions_for_sentence, reverse=True, key=lambda decision, state: decision.score + state.score)
+                top_k_decisions = all_decisions_for_sentence[:k]
+                for decision_nr, (decision, parsing_state) in enumerate(top_k_decisions):
+                    next_parsing_state = self.transition_system.step(parsing_state, decision, in_place = False)
+                    parsing_states[sentence_id][decision_nr] = next_parsing_state
+                    active_nodes.append(next_parsing_state.active_node)
+
+            next_active_nodes = torch.tensor(active_nodes, dtype=torch.long, device=device)
+
+            assert next_active_nodes.shape == (batch_size,)
+
+            if all(all(s.is_complete() for s in sentennce_states) for sentennce_states in parsing_states):
+                break
+
+        ret = []
+        for sentence in parsing_states:
+            best_state = max(sentence, key=lambda state: state.score)
+            ret.append(best_state.extract_tree())
+
+        return ret
 
     def get_metrics(self, reset: bool = False) -> Dict[str, float]:
         r = dict()

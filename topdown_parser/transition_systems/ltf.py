@@ -14,7 +14,8 @@ from topdown_parser.dataset_readers.AdditionalLexicon import AdditionalLexicon
 from topdown_parser.dataset_readers.amconll_tools import AMSentence
 from topdown_parser.nn.utils import get_device_id
 from topdown_parser.transition_systems import utils
-from topdown_parser.transition_systems.transition_system import TransitionSystem, Decision, get_parent, get_siblings
+from topdown_parser.transition_systems.transition_system import TransitionSystem, Decision
+#from topdown_parser.transition_systems.parsing_state import get_parent, get_siblings
 from topdown_parser.transition_systems.utils import scores_to_selection, get_best_constant
 
 import numpy as np

@@ -1,3 +1,4 @@
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import List, Iterable, Optional, Tuple, Dict, Any, Set
 
@@ -6,16 +7,37 @@ import torch
 from topdown_parser.am_algebra.tree import Tree
 from topdown_parser.dataset_readers.AdditionalLexicon import AdditionalLexicon
 from topdown_parser.dataset_readers.amconll_tools import AMSentence
+from topdown_parser.nn.EdgeLabelModel import EdgeLabelModel
 from topdown_parser.nn.utils import get_device_id
-from topdown_parser.transition_systems.transition_system import TransitionSystem, Decision, get_parent, get_siblings
-from topdown_parser.transition_systems.utils import scores_to_selection
+from topdown_parser.transition_systems.parsing_state import CommonParsingState, ParsingState
+from topdown_parser.transition_systems.transition_system import TransitionSystem, Decision
+from topdown_parser.transition_systems.utils import scores_to_selection, single_score_to_selection
 
+import numpy as np
 
 def flatten(l: Iterable[List[Any]]) -> List[Any]:
     r = []
     for x in l:
         r.extend(x)
     return r
+
+class DFSState(CommonParsingState):
+
+    def __init__(self, sentence_id: int, decoder_state: Any, active_node: int, score: float,
+                 sentence : AMSentence, lexicon : AdditionalLexicon,
+                 heads: List[int], children: Dict[int, List[int]], edge_labels: List[str],
+                 constants : List[Tuple[str,str]], lex_labels : List[str],
+                 stack : List[int], seen : Set[int]):
+
+        super().__init__(sentence_id, decoder_state, active_node, score, sentence, lexicon, heads, children, edge_labels,
+                         constants, lex_labels)
+
+        self.stack = stack
+        self.seen = seen
+
+    def is_complete(self) -> bool:
+        return self.stack == []
+
 
 
 @TransitionSystem.register("dfs")
@@ -71,115 +93,107 @@ class DFS(TransitionSystem):
                all(x.label == y.label for x, y in zip(gold_sentence, predicted)) and \
                all(x.fragment == y.fragment and x.typ == y.typ for x, y in zip(gold_sentence, predicted))
 
-    def get_additional_choices(self, decision : Decision) -> Dict[str, List[str]]:
-        """
-        Turn a decision into a dictionary of additional choices (beyond the node that is selected)
-        :param decision:
-        :return:
-        """
-        r = dict()
-        if decision.label != "":
-            r["selected_edge_labels"] = [decision.label]
-        if decision.supertag != ("",""):
-            r["selected_constants"] = ["--TYPE--".join(decision.supertag)]
-        if decision.lexlabel != "":
-            r["selected_lex_labels"] = [decision.lexlabel]
+    def initial_state(self, sentence : AMSentence, decoder_state : Any) -> ParsingState:
+        stack = [0]
+        seen = set()
+        heads = [0 for _ in range(len(sentence))]
+        children = {i: [] for i in range(len(sentence) + 1)}
+        labels = ["IGNORE" for _ in range(len(sentence))]
+        lex_labels = ["_" for _ in range(len(sentence))]
+        supertags = [("_","_") for _ in range(len(sentence))]
+        #TODO sentence id
+        return DFSState(0, decoder_state, 0, 0.0, sentence,self.additional_lexicon, heads, children, labels, supertags, lex_labels, stack, seen)
 
-        return r
+    def step(self, state : DFSState, decision: Decision, in_place: bool = False) -> ParsingState:
+        if in_place:
+            copy = state
+        else:
+            copy = deepcopy(state)
 
-    def reset_parses(self, sentences: List[AMSentence], input_seq_len: int) -> None:
-        self.input_seq_len = input_seq_len
-        self.batch_size = len(sentences)
-        self.stack = [[0] for _ in range(self.batch_size)]  # 1-based
-        self.seen = [{0} for _ in range(self.batch_size)]
-        self.heads = [[0 for _ in range(len(sentence.words))] for sentence in sentences]
-        self.children = [{i: [] for i in range(len(sentence.words) + 1)} for sentence in sentences]  # 1-based
-        self.labels = [["IGNORE" for _ in range(len(sentence.words))] for sentence in sentences]
-        self.lex_labels = [["_" for _ in range(len(sentence.words))] for sentence in sentences]
-        self.supertags = [["_--TYPE--_" for _ in range(len(sentence.words))] for sentence in sentences]
-        self.sentences = sentences
-
-    def step(self, selected_nodes: torch.Tensor, additional_scores : Dict[str, torch.Tensor]) -> Tuple[torch.Tensor, torch.Tensor]:
-        device = get_device_id(selected_nodes)
-        assert selected_nodes.shape == (self.batch_size,)
-
-        selected_nodes = selected_nodes.cpu().numpy()
-        selected_labels = scores_to_selection(additional_scores, self.additional_lexicon, "edge_labels")
-        selected_supertags = scores_to_selection(additional_scores, self.additional_lexicon, "constants")
-        selected_lex_labels = scores_to_selection(additional_scores, self.additional_lexicon, "lex_labels")
-
-        r = []
-        next_choices = []
-        for i in range(self.batch_size):
-            if self.stack[i]:
-                selected_node_in_batch_element = int(selected_nodes[i])
-
-                if selected_node_in_batch_element == 0 and self.pop_with_0:
-                    self.stack[i].pop()
-                elif not self.pop_with_0 and selected_node_in_batch_element in self.seen[i]:
-                    popped = self.stack[i].pop()
-                    assert popped == selected_nodes[i]
-                else:
-                    self.heads[i][selected_node_in_batch_element - 1] = self.stack[i][-1]
-
-                    self.children[i][self.stack[i][-1]].append(selected_node_in_batch_element)  # 1-based
-
-                    self.labels[i][selected_node_in_batch_element - 1] = selected_labels[i]
-
-                    if selected_supertags is not None:
-                        self.supertags[i][selected_node_in_batch_element - 1] = selected_supertags[i]
-
-                    if selected_lex_labels is not None:
-                        self.lex_labels[i][selected_node_in_batch_element - 1] = selected_lex_labels[i]
-
-                    # push onto stack
-                    self.stack[i].append(selected_node_in_batch_element)
-
-                self.seen[i].add(selected_node_in_batch_element)
-                choices = torch.zeros(self.input_seq_len)
-
-                if not self.stack[i]:
-                    r.append(0)
-                else:
-                    r.append(self.stack[i][-1])
-                    # We can close the current node:
-                    if self.pop_with_0:
-                        choices[0] = 1
-                    else:
-                        choices[self.stack[i][-1]] = 1
-
-                for child in range(1, len(self.sentences[i]) + 1):  # or we can choose a node that has not been used yet
-                    if child not in self.seen[i]:
-                        choices[child] = 1
-                next_choices.append(choices)
+        if state.stack:
+            if decision.position == 0 and self.pop_with_0:
+                copy.stack.pop()
+            elif not self.pop_with_0 and decision.position in copy.seen:
+                popped = copy.stack.pop()
+                assert popped == decision.position
             else:
-                r.append(0)
-                next_choices.append(torch.zeros(self.input_seq_len))
+                copy.heads[decision.position-1] = copy.stack[-1]
 
-        return torch.tensor(r, device=device), torch.stack(next_choices, dim=0)
+                copy.children[copy.stack[-1]].append(decision.position)  # 1-based
 
-    def retrieve_parses(self) -> List[AMSentence]:
-        assert all(stack == [] for stack in self.stack)  # all parses complete
+                copy.edge_labels[decision.position - 1] = decision.label
 
-        sentences = [sentence.set_heads(self.heads[i]) for i, sentence in enumerate(self.sentences)]
-        sentences = [sentence.set_labels(self.labels[i]) for i, sentence in enumerate(sentences)]
-        sentences = [sentence.set_supertags(self.supertags[i]) for i, sentence in enumerate(sentences)]
-        sentences = [sentence.set_lexlabels(self.lex_labels[i]) for i, sentence in enumerate(sentences)]
+                if copy.constants is not None:
+                    copy.constants[decision.position - 1] = decision.supertag
 
-        self.sentences = None
-        self.stack = None
-        self.seen = None
-        self.heads = None
-        self.batch_size = None
-        self.lex_labels = None
-        self.supertags = None
+                if copy.lex_labels is not None:
+                    copy.lex_labels[decision.position - 1] = decision.lexlabel
 
-        return sentences
+                # push onto stack
+                copy.stack.append(decision.position)
 
-    def gather_context(self, active_nodes: torch.Tensor) -> Dict[str, torch.Tensor]:
+            copy.seen.add(decision.position)
+
+            if not copy.stack:
+                copy.active_node = 0
+            else:
+                copy.active_node = copy.stack[-1]
+        else:
+            copy.active_node = 0
+
+        return copy
+
+    def make_decision(self, scores: Dict[str, torch.Tensor], label_model: EdgeLabelModel, state : DFSState) -> Decision:
+        # Select node:
+        child_scores = scores["children_scores"].detach().cpu() # shape (input_seq_len)
+        #Cannot select nodes that we have visited already (except if not pop with 0 and currently active, then we can close).
+
+        for seen in state.seen:
+            if self.pop_with_0 and seen == 0:
+                pass
+            elif not self.pop_with_0 and seen == state.active_node:
+                pass
+            else:
+                child_scores[seen] = -10e10
+
+        score = 0.0
+        s, selected_node = torch.max(child_scores, dim=0)
+        score += s
+        s, selected_label = single_score_to_selection(scores, self.additional_lexicon, "edge_labels")
+        score += s
+        s, selected_supertag = single_score_to_selection(scores, self.additional_lexicon, "constants")
+        score += s
+        s, selected_lex_label = single_score_to_selection(scores, self.additional_lexicon, "lex_labels")
+        score += s
+
+        return Decision(int(selected_node), selected_label, AMSentence.split_supertag(selected_supertag), selected_lex_label, score=score)
+
+
+    def top_k_decision(self, scores: Dict[str, torch.Tensor], encoder_state : Dict[str,torch.Tensor],
+                       label_model: EdgeLabelModel, state: DFSState, k : int) -> List[Decision]:
+        # Select node:
+        child_scores = scores["children_scores"].detach().cpu() # shape (input_seq_len)
+        #Cannot select nodes that we have visited already (except if not pop with 0 and currently active, then we can close).
+
+        for seen in state.seen:
+            if self.pop_with_0 and seen == 0:
+                pass
+            elif not self.pop_with_0 and seen == state.active_node:
+                pass
+            else:
+                child_scores[seen] = -10e10
+
+        scores, children = torch.argsort(child_scores, descending=True)
+        scores = scores[:k]
+        children = children[:k]
+        # Now have k best children
+        label_model.set_input(encoder_state["encoded_input"], encoder_state["input_mask"])
+        label_model.edge_label_scores(state.decoder_state) #TODO duplicate decoder state
+
+    def assumes_greedy_ok(self) -> Set[str]:
         """
-
-        :param active_nodes: tensor of shape (batch_size,) with nodes that are currently on top of the stack.
+        The dictionary keys of the context provider which we make greedy decisions on in top_k_decisions
+        because we assume these choices won't impact future scores.
         :return:
         """
-        return super()._gather_context(active_nodes, self.batch_size, self.heads, self.children, self.labels, self.supertags)
+        return {"children_labels", "lexical_types"}

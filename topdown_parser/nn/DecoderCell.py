@@ -1,4 +1,4 @@
-from typing import Any, Optional
+from typing import Any, Optional, List
 
 import torch
 from allennlp.common import Registrable
@@ -19,6 +19,21 @@ class DecoderCell(Registrable, Module):
 
     def get_output_dim(self) -> int:
         return self.hidden_dim
+
+    def get_full_states(self) -> List[Any]:
+        """
+        Return a full represention of the current state.
+        :return: a list of length batch_size
+        """
+        raise NotImplementedError()
+
+    def set_with_full_states(self, states: List[Any]) -> None:
+        """
+        Takes the output of get_full_states and restores the internal representation.
+        :param states:
+        :return:
+        """
+        raise NotImplementedError()
 
     def reset_cell(self, batch_size : int, device : Optional[int] = None) -> None:
         """

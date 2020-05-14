@@ -7,6 +7,12 @@ from topdown_parser.dataset_readers.AdditionalLexicon import AdditionalLexicon
 import numpy as np
 
 
+def single_score_to_selection(additional_scores : Dict[str, torch.Tensor], lexicon : AdditionalLexicon, namespace : str) -> Optional[Tuple[float, str]]:
+    if namespace+"_scores" not in additional_scores:
+        return None
+    val, id = torch.max(additional_scores[namespace+"_scores"], dim=0)
+    return val.cpu().numpy(), lexicon.get_str_repr(namespace, int(id))
+
 def scores_to_selection(additional_scores : Dict[str, torch.Tensor], lexicon : AdditionalLexicon, namespace : str) -> Optional[List[str]]:
     if namespace+"_scores" not in additional_scores:
         return None

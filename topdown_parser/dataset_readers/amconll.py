@@ -20,6 +20,7 @@ from .ContextField import ContextField
 from .amconll_tools import parse_amconll, AMSentence
 from ..am_algebra.tools import is_welltyped
 from topdown_parser.transition_systems.transition_system import TransitionSystem
+from ..transition_systems.parsing_state import ParsingState
 
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
 
@@ -144,37 +145,34 @@ class AMConllDatasetReader(OrderedDatasetReader):
         # Try to reconstruct tree
         stripped_sentence = am_sentence.strip_annotation()
 
-        self.transition_system.reset_parses([stripped_sentence], len(stripped_sentence.words) + 1)
+        state : ParsingState = self.transition_system.initial_state(stripped_sentence, None)
         active_nodes = [0]
-        next_active = torch.tensor([0])
+        #next_active = torch.tensor([0])
         # print(am_sentence)
         contexts = dict()
         for i in range(1, len(decisions)):
             #Gather context
-            context = self.transition_system.gather_context(next_active)
+            context = state.gather_context(None) #device: cpu
             for k, v in context.items():
                 if k not in contexts:
                     contexts[k] = []
 
-                if len(v.shape) > 1: #remove batch dimension, we have only one batch element
-                    v = v.squeeze(0)
+                # if len(v.shape) > 1: #remove batch dimension, we have only one batch element
+                #     v = v.squeeze(0)
 
                 contexts[k].append(v.numpy())
             # print(i, next_active, decisions[i].position, self.transition_system.gather_context(next_active))
-            additional_choices = self.transition_system.get_additional_choices(decisions[i])
-            next_active, valid_choices = self.transition_system.step(torch.tensor([decisions[i].position]),
-                                                                    self.transition_system.additional_choices_to_scores(additional_choices))
+            state = self.transition_system.step(state, decisions[i], in_place=True)
 
             if i == len(decisions) - 1:  # there are no further active nodes after this step
                 break
 
-            active_nodes.append(int(next_active.numpy()))
-            assert valid_choices[0, decisions[
-                i + 1].position] == 1, f"the gold choice ({decisions[i + 1].position}) for the next step is not allowed ({valid_choices})"
+            active_nodes.append(state.active_node)
 
-        reconstructed = self.transition_system.retrieve_parses()
+        assert state.is_complete(), f"State should be complete: {state}"
+        reconstructed = state.extract_tree()
 
-        assert self.transition_system.check_correct(am_sentence, reconstructed[0]), f"Could not reconstruct this sentence\n: {am_sentence.get_tokens(False)}"
+        assert self.transition_system.check_correct(am_sentence, reconstructed), f"Could not reconstruct this sentence\n: {am_sentence.get_tokens(False)}"
 
         ##################################################################
 
