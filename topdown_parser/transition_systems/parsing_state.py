@@ -12,7 +12,6 @@ import numpy as np
 @dataclass
 class ParsingState:
 
-    sentence_id : int
     decoder_state : Any
     active_node : int
     score : float
@@ -45,12 +44,13 @@ class ParsingState:
 
 class CommonParsingState(ParsingState, ABC):
 
-    def __init__(self, sentence_id: int, decoder_state: Any, active_node: int, score: float,
+    def __init__(self,decoder_state: Any, active_node: int, score: float,
                  sentence : AMSentence, lexicon : AdditionalLexicon,
                  heads: List[int], children: Dict[int, List[int]],
-                 edge_labels : List[str], constants: Optional[List[Tuple[str,str]]] = None, lex_labels: Optional[List[str]] = None):
+                 edge_labels : List[str], constants: List[Tuple[str,str]], lex_labels: List[str],
+                 stack: List[int], seen: Set[int]):
 
-        super().__init__(sentence_id, decoder_state, active_node, score, lexicon)
+        super().__init__(decoder_state, active_node, score, lexicon)
 
         self.sentence = sentence
         self.heads = heads
@@ -58,6 +58,8 @@ class CommonParsingState(ParsingState, ABC):
         self.constants = constants
         self.children = children
         self.lex_labels = lex_labels
+        self.seen = seen
+        self.stack = stack
 
     def extract_tree(self) -> AMSentence:
         sentence = self.sentence.set_heads(self.heads)

@@ -12,29 +12,36 @@ from topdown_parser.nn.utils import get_device_id
 from topdown_parser.transition_systems.parsing_state import CommonParsingState, ParsingState
 from topdown_parser.transition_systems.transition_system import TransitionSystem, Decision
 #from topdown_parser.transition_systems.parsing_state import get_parent, get_siblings
+from topdown_parser.transition_systems.unconstrained_system import UnconstrainedTransitionSystem
 from topdown_parser.transition_systems.utils import scores_to_selection, single_score_to_selection
 
 
 class DFSChildrenFirstState(CommonParsingState):
 
-    def __init__(self, sentence_id: int, decoder_state: Any, active_node: int, score: float,
+    def __init__(self, decoder_state: Any, active_node: int, score: float,
                  sentence : AMSentence, lexicon : AdditionalLexicon,
                  heads: List[int], children: Dict[int, List[int]], edge_labels: List[str],
                  constants : List[Tuple[str,str]], lex_labels : List[str],
                  stack : List[int], seen : Set[int], substack : List[int]):
 
-        super().__init__(sentence_id, decoder_state, active_node, score, sentence, lexicon, heads, children, edge_labels,
-                         constants, lex_labels)
+        super().__init__(decoder_state, active_node, score, sentence, lexicon, heads, children, edge_labels,
+                         constants, lex_labels, stack, seen)
 
-        self.stack = stack
-        self.seen = seen
         self.substack = substack
+        self.step = 0
 
     def is_complete(self) -> bool:
         return self.stack == []
 
+    def copy(self) -> "ParsingState":
+        copy = DFSChildrenFirstState(self.decoder_state, self.active_node, self.score, self.sentence, self.lexicon,
+                            list(self.heads), deepcopy(self.children), list(self.edge_labels), list(self.constants), list(self.lex_labels),
+                            list(self.stack), set(self.seen), list(self.substack))
+        copy.step = self.step
+        return copy
+
 @TransitionSystem.register("dfs-children-first")
-class DFSChildrenFirst(TransitionSystem):
+class DFSChildrenFirst(UnconstrainedTransitionSystem):
     """
     DFS where when a node is visited for the second time, all its children are visited once.
     Afterwards, the first child is visited for the second time. Then the second child etc.
@@ -48,15 +55,11 @@ class DFSChildrenFirst(TransitionSystem):
         reverse_push_actions means that the order of push actions is the opposite order in which the children of
         the node are recursively visited.
         """
-        super().__init__(additional_lexicon)
-        self.pop_with_0 = pop_with_0
+        super().__init__(additional_lexicon, pop_with_0)
         self.reverse_push_actions = reverse_push_actions
         assert children_order in ["LR", "IO", "RL"], "unknown children order"
 
         self.children_order = children_order
-
-    def predict_supertag_from_tos(self) -> bool:
-        return True
 
     def _construct_seq(self, tree: Tree) -> List[Decision]:
         own_position = tree.node[0]
@@ -116,33 +119,32 @@ class DFSChildrenFirst(TransitionSystem):
         labels = ["IGNORE" for _ in range(len(sentence))]
         lex_labels = ["_" for _ in range(len(sentence))]
         supertags = [("_","_") for _ in range(len(sentence))]
-        #TODO sentence id
-        return DFSChildrenFirstState(0, decoder_state, 0, 0.0, sentence,self.additional_lexicon, heads,
+
+        return DFSChildrenFirstState(decoder_state, 0, 0.0, sentence, self.additional_lexicon, heads,
                                     children, labels, supertags, lex_labels, stack, seen, substack)
 
-
     def step(self, state : DFSChildrenFirstState, decision: Decision, in_place: bool = False) -> ParsingState:
-        raise NotImplementedError("There's still a bug here.")
         if in_place:
             copy = state
         else:
-            copy = deepcopy(state)
+            copy = state.copy()
+        copy.step += 1
 
         if state.stack:
             position = decision.position
 
             if (position in copy.seen and not self.pop_with_0) or \
-                (position == 0 and self.pop_with_0):
-                popped = copy.stack.pop()
+                (position == 0 and self.pop_with_0) or copy.step == 2: #second step is always pop
+                tos = copy.stack.pop()
 
                 if not self.pop_with_0:
-                    assert popped == position
+                    assert tos == position
 
-                if copy.constants is not None:
-                    copy.constants[position - 1] = decision.supertag
+                if copy.constants is not None and tos != 0:
+                    copy.constants[tos - 1] = decision.supertag
 
-                if copy.lex_labels is not None:
-                    copy.lex_labels[position - 1] = decision.lexlabel
+                if copy.lex_labels is not None and tos != 0:
+                    copy.lex_labels[tos - 1] = decision.lexlabel
 
                 if self.reverse_push_actions:
                     copy.stack.extend(copy.substack)
@@ -160,32 +162,12 @@ class DFSChildrenFirst(TransitionSystem):
                 copy.substack.append(position)
 
             copy.seen.add(position)
-
+            if copy.stack:
+                copy.active_node = copy.stack[-1]
+            else:
+                copy.active_node = 0
         else:
             copy.active_node = 0
         return copy
 
-    def make_decision(self, scores: Dict[str, torch.Tensor], label_model: EdgeLabelModel, state : DFSChildrenFirstState) -> Decision:
-        # Select node:
-        child_scores = scores["children_scores"].detach().cpu() # shape (input_seq_len)
-        #Cannot select nodes that we have visited already (except if not pop with 0 and currently active, then we can close).
 
-        for seen in state.seen:
-            if self.pop_with_0 and seen == 0:
-                pass
-            elif not self.pop_with_0 and seen == state.active_node:
-                pass
-            else:
-                child_scores[seen] = -10e10
-
-        score = 0.0
-        s, selected_node = torch.max(child_scores, dim=0)
-        score += s
-        s, selected_label = single_score_to_selection(scores, self.additional_lexicon, "edge_labels")
-        score += s
-        s, selected_supertag = single_score_to_selection(scores, self.additional_lexicon, "constants")
-        score += s
-        s, selected_lex_label = single_score_to_selection(scores, self.additional_lexicon, "lex_labels")
-        score += s
-
-        return Decision(int(selected_node), selected_label, AMSentence.split_supertag(selected_supertag), selected_lex_label, score=score)

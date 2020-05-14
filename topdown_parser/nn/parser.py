@@ -118,6 +118,9 @@ class TopDownDependencyParser(Model):
 
         self.transition_system.validate_model(self)
 
+        if k_best < 1:
+            raise ConfigurationError("k_best must be at least 1.")
+
     def forward(self, words: Dict[str, torch.Tensor],
                 pos_tags: torch.LongTensor,
                 lemmas: torch.LongTensor,
@@ -157,10 +160,10 @@ class TopDownDependencyParser(Model):
         if not self.training:
 
             sentences = [s.strip_annotation() for s in sentences]
-            #if self.k_best <= 1:
-            #predictions = self.parse_sentences(state, metadata[0]["formalism"], sentences)
-            # else:
-            predictions = self.beam_search(state, sentences, self.k_best)
+            if self.k_best == 1:
+                predictions = self.parse_sentences(state, metadata[0]["formalism"], sentences)
+            else:
+                predictions = self.beam_search(state, sentences, self.k_best)
 
             parsing_time_t1 = time.time()
             avg_parsing_time = (parsing_time_t1 - parsing_time_t0) / batch_size
