@@ -12,8 +12,6 @@ local num_filters = 50;
 local filters = [3];
 local max_filter = 3; //KEEP IN SYNC WITH filters!
 
-local bert_model = "bert-large-uncased";
-
 local lemma_embedding = 64;
 
 local ne_embedding = 16;
@@ -23,6 +21,8 @@ local lexicon = import "../../configs/lexicon.libsonnet";
 local eval_commands = import "../../configs/eval_commands.libsonnet";
 
 local data_paths = import "../../configs/data_paths.libsonnet";
+
+local glove_dir = data_paths["GLOVE_DIR"];
 
 local task = "AMR-2017";
 
@@ -40,10 +40,10 @@ local dataset_reader = {
                "overwrite_formalism" : task,
 
               "token_indexers" : {
-                    "bert": {
-                      "type": "bert-pretrained",
-                      "pretrained_model": bert_model,
-                    },
+                   "tokens" : {
+                       "type": "single_id",
+                        "lowercase_tokens": true
+                   },
                    "token_characters" : {
                        "type" : "characters",
                        "min_padding_length" : max_filter
@@ -117,7 +117,7 @@ local data_iterator = {
 
         "encoder" : {
              "type": "stacked_bidirectional_lstm",
-            "input_size": num_filters + 1024 + pos_embedding + ne_embedding + lemma_embedding,
+            "input_size": num_filters + word_dim + pos_embedding + ne_embedding + lemma_embedding,
             "hidden_size": encoder_dim,
             "num_layers" : 3,
             "recurrent_dropout_probability" : 0.33,
@@ -126,44 +126,39 @@ local data_iterator = {
 
         "tagger_encoder" : {
              "type": "stacked_bidirectional_lstm",
-            "input_size": num_filters + 1024 + pos_embedding + ne_embedding + lemma_embedding,
+            "input_size": num_filters + word_dim + pos_embedding + ne_embedding + lemma_embedding,
             "hidden_size": encoder_dim,
-            "num_layers" : 1,
+            "num_layers" : 2,
             "recurrent_dropout_probability" : 0.33,
             "layer_dropout_probability" : 0.33
         },
 
         "decoder" : {
             "type" : "ma-lstm",
-            "input_dim": 3*2*encoder_dim,
+            "input_dim": 3*2*encoder_dim, # decoder vector + parent vector + child vector, each of size 2*encoder_dim
             "hidden_dim" : 2*encoder_dim,
             "input_dropout" : 0.33,
             "recurrent_dropout" : 0.33
         },
-           "text_field_embedder": {
-               "type": "basic",
-               "allow_unmatched_keys" : true,
-               "embedder_to_indexer_map": {
-                   "bert": ["bert", "bert-offsets"], "token_characters" : ["token_characters"] },
-               "token_embedders": {
-                   "bert" : {
-                       "type": "bert-pretrained",
-                           "pretrained_model" : bert_model,
-                       },
+        "text_field_embedder": {
+               "tokens": {
+                    "type": "embedding",
+                    "embedding_dim": word_dim,
+                    "pretrained_file": glove_dir+"glove.6B.200d.txt"
+                },
                 "token_characters": {
-                     "type": "character_encoding",
-                         "embedding": {
-                           "embedding_dim": char_dim
-                         },
-                         "encoder": {
-                           "type": "cnn",
-                           "embedding_dim": char_dim,
-                           "num_filters": num_filters,
-                           "ngram_filter_sizes": filters
-                         }
-                   }
+                  "type": "character_encoding",
+                      "embedding": {
+                        "embedding_dim": char_dim
+                      },
+                      "encoder": {
+                        "type": "cnn",
+                        "embedding_dim": char_dim,
+                        "num_filters": num_filters,
+                        "ngram_filter_sizes": filters
+                      }
                 }
-           },
+        },
 
         "edge_model" : {
             "type" : "ma",

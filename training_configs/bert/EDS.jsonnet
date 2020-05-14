@@ -77,7 +77,11 @@ local data_iterator = {
         "transition_system" : transition_system,
 
         "context_provider" : {
-                  "type" : "most-recent-child"
+            "type" : "plain-concat",
+            "providers" : [
+                   {"type" : "most-recent-child"},
+                   {"type" : "parent" }
+                   ]
         },
 
         "input_dropout" : 0.33,
@@ -131,7 +135,7 @@ local data_iterator = {
 
         "decoder" : {
             "type" : "ma-lstm",
-            "input_dim": 2*encoder_dim,
+            "input_dim": 3*2*encoder_dim,
             "hidden_dim" : 2*encoder_dim,
             "input_dropout" : 0.33,
             "recurrent_dropout" : 0.33
