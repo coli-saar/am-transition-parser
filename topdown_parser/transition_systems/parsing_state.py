@@ -33,6 +33,15 @@ class ParsingState:
         """
         raise NotImplementedError()
 
+    def copy(self) -> "ParsingState":
+        """
+        A way of copying this parsing state such that modifying objects that constrain the future
+        will be modifying copied objects. e.g. we need a deep copy of the stack and nodes seen already
+        but we don't need a deep copy of the decoder state or the lexicon.
+        :return:
+        """
+        raise NotImplementedError()
+
 
 class CommonParsingState(ParsingState, ABC):
 
