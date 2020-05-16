@@ -117,9 +117,8 @@ class LTF(TransitionSystem):
 
         self.read_cache = ReadCache()
 
-
     def predict_supertag_from_tos(self) -> bool:
-        return False
+        return True
 
     def validate_model(self, parser : "TopDownDependencyParser") -> None:
         """
@@ -347,7 +346,7 @@ class LTF(TransitionSystem):
 
             assert best_constant is not None #we have to be able to find something here!
             selected_constant = AMSentence.split_supertag(self.additional_lexicon.get_str_repr("constants", best_constant))
-            lexical_type_of_tos = self.read_cache.parse_str(selected_constant[1]) # TODO efficiency?
+            lexical_type_of_tos = self.read_cache.parse_str(selected_constant[1])
             selected_term_type = best_term_type
             applyset_todo_tos = lexical_type_of_tos.get_apply_set(selected_term_type)
             score += max_constant_score
