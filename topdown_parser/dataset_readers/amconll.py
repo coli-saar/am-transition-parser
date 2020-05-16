@@ -20,6 +20,7 @@ from .ContextField import ContextField
 from .amconll_tools import parse_amconll, AMSentence
 from ..am_algebra.tools import is_welltyped
 from topdown_parser.transition_systems.transition_system import TransitionSystem
+from ..nn.EdgeLabelModel import OracleLabelModel
 from ..transition_systems.parsing_state import ParsingState
 
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
@@ -42,8 +43,12 @@ class AMConllDatasetReader(OrderedDatasetReader):
                  lazy: bool = False, fraction: float = 1.0,
                  overwrite_formalism : str = None,
                  workers : int = 1,
+                 run_oracle : bool = True,
+                 fuzz: bool = False,
                  only_read_fraction_if_train_in_filename: bool = False) -> None:
         super().__init__(lazy)
+        self.fuzz = fuzz
+        self.run_oracle = run_oracle
         self.workers = workers
         self.overwrite_formalism = overwrite_formalism
         self.transition_system: TransitionSystem = transition_system
@@ -173,6 +178,38 @@ class AMConllDatasetReader(OrderedDatasetReader):
         reconstructed = state.extract_tree()
 
         assert self.transition_system.check_correct(am_sentence, reconstructed), f"Could not reconstruct this sentence\n: {am_sentence.get_tokens(False)}"
+
+        if self.run_oracle:
+            ## Now with oracle scores:
+            stripped_sentence = am_sentence.strip_annotation()
+
+            state : ParsingState = self.transition_system.initial_state(stripped_sentence, None)
+            oracel_edge_model = OracleLabelModel(self.lexicon)
+            for decision in decisions[1:]:
+                scores = self.transition_system.decision_to_score(stripped_sentence, decision)
+                oracel_edge_model.set_gold_labels([decision.label])
+                decision_prime = self.transition_system.make_decision(scores, oracel_edge_model, state)
+                state = self.transition_system.step(state, decision_prime, in_place=True)
+            assert state.is_complete()
+            reconstructed = state.extract_tree()
+            assert self.transition_system.check_correct(am_sentence, reconstructed), f"Could not reconstruct this sentence\n: {am_sentence.get_tokens(False)}"
+
+        if self.fuzz:
+            # Now fuzz
+            rng_state = torch.random.get_rng_state()
+            stripped_sentence = am_sentence.strip_annotation()
+            hash_value = len(am_sentence) + sum(self.lexicon.get_id("edge_labels", w.label) for w in am_sentence.words)
+            torch.random.manual_seed(hash_value)
+            state : ParsingState = self.transition_system.initial_state(stripped_sentence, None)
+            oracel_edge_model = OracleLabelModel(self.lexicon)
+            for _ in range(2*len(stripped_sentence)+1):
+                scores = self.transition_system.fuzz_scores(stripped_sentence)
+                decision = self.transition_system.make_decision(scores, oracel_edge_model, state)
+                state = self.transition_system.step(state, decision, in_place=True)
+
+            assert state.is_complete()
+            assert is_welltyped(state.extract_tree())
+            torch.random.set_rng_state(rng_state)
 
         ##################################################################
 
