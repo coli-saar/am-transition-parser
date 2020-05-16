@@ -7,14 +7,9 @@ import torch
 from topdown_parser.am_algebra.tree import Tree
 from topdown_parser.dataset_readers.AdditionalLexicon import AdditionalLexicon
 from topdown_parser.dataset_readers.amconll_tools import AMSentence
-from topdown_parser.nn.EdgeLabelModel import EdgeLabelModel
-from topdown_parser.nn.utils import get_device_id
 from topdown_parser.transition_systems.parsing_state import CommonParsingState, ParsingState
 from topdown_parser.transition_systems.transition_system import TransitionSystem, Decision
 from topdown_parser.transition_systems.unconstrained_system import UnconstrainedTransitionSystem
-from topdown_parser.transition_systems.utils import scores_to_selection, single_score_to_selection
-
-import numpy as np
 
 
 class DFSState(CommonParsingState):
@@ -73,7 +68,7 @@ class DFS(UnconstrainedTransitionSystem):
         last_position = 0 if self.pop_with_0 else own_position
         if len(tree.children) == 0:
             #This subtree has no children, thus also no first child at which we would determine the type of the parent
-            #Let's determine the type now then.
+            #Let's determine the type now.
             last_decision = Decision(last_position, "", (tree.node[1].fragment, tree.node[1].typ),
                                      tree.node[1].lexlabel)
         else:

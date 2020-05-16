@@ -1,4 +1,4 @@
-from typing import List, Optional, Dict, Set, Tuple
+from typing import List, Optional, Dict, Set, Tuple, Iterable, Any
 
 import torch
 import torch.nn.functional as F
@@ -40,3 +40,10 @@ def get_best_constant(correct_types: Set[int], constant_scores : np.array) -> Tu
             best_index = i
             best_score = score
     return best_index, best_score
+
+def is_empty(a : Iterable[Any]) -> bool:
+    try:
+        next(iter(a))
+        return False
+    except StopIteration:
+        return True

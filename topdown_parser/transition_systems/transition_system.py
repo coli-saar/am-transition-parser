@@ -115,14 +115,31 @@ class TransitionSystem(Registrable):
 
         term_type_scores = torch.zeros(self.additional_lexicon.vocab_size("term_types"))
         if decision.termtyp is not None:
-            term_type_scores[self.additional_lexicon.get_id("term_types", decision.termtyp)] = 1
+            term_type_scores[self.additional_lexicon.get_id("term_types", str(decision.termtyp))] = 1
 
         lex_label_scores = torch.zeros(self.additional_lexicon.vocab_size("lex_labels"))
         if decision.lexlabel != "":
             lex_label_scores[self.additional_lexicon.get_id("lex_labels", decision.lexlabel)] = 1
 
+        edge_label_scores = torch.zeros(self.additional_lexicon.vocab_size("edge_labels"))
+        if decision.label != "":
+            edge_label_scores[self.additional_lexicon.get_id("edge_labels", decision.label)] = 1
+
         return {"children_scores": children_scores, "constants_scores": constant_scores,
-                "term_types_scores": term_type_scores, "lex_labels_scores" : lex_label_scores}
+                "term_types_scores": term_type_scores, "lex_labels_scores" : lex_label_scores,
+                "edge_labels_scores" : edge_label_scores}
 
+    def fuzz_scores(self, sentence : AMSentence) -> Dict[str, torch.Tensor]:
+        children_scores = torch.rand(len(sentence)+1)
+        constant_scores = torch.rand(self.additional_lexicon.vocab_size("constants"))
 
+        term_type_scores = torch.rand(self.additional_lexicon.vocab_size("term_types"))
+
+        lex_label_scores = torch.rand(self.additional_lexicon.vocab_size("lex_labels"))
+
+        edge_label_scores = torch.rand(self.additional_lexicon.vocab_size("edge_labels"))
+
+        return {"children_scores": children_scores, "constants_scores": constant_scores,
+                "term_types_scores": term_type_scores, "lex_labels_scores" : lex_label_scores,
+                "edge_labels_scores" : edge_label_scores}
 
