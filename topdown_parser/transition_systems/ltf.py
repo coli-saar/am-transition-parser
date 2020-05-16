@@ -7,7 +7,7 @@ import torch
 from allennlp.common.checks import ConfigurationError
 
 from topdown_parser.am_algebra import AMType, NonAMTypeException, new_amtypes
-from topdown_parser.am_algebra.new_amtypes import CandidateLexType, ModCache
+from topdown_parser.am_algebra.new_amtypes import CandidateLexType, ModCache, ReadCache
 from topdown_parser.am_algebra.tools import get_term_types
 from topdown_parser.am_algebra.tree import Tree
 from topdown_parser.dataset_readers.AdditionalLexicon import AdditionalLexicon
@@ -114,6 +114,8 @@ class LTF(TransitionSystem):
         self.sources: Set[str] = collect_sources(self.additional_lexicon)
         modify_sources = {source for source in self.sources if self.additional_lexicon.contains("edge_labels", "MOD_"+source) }
         self.modify_ids = {self.additional_lexicon.get_id("edge_labels", "MOD_"+source) for source in modify_sources} #ids of modify edges
+
+        self.read_cache = ReadCache()
 
 
     def predict_supertag_from_tos(self) -> bool:
@@ -233,7 +235,7 @@ class LTF(TransitionSystem):
                 copy.lex_labels[state.active_node-1] = decision.lexlabel
 
                 # Determine apply set which we have to fulfill.
-                lex_type = AMType.parse_str(decision.supertag[1])
+                lex_type = self.read_cache.parse_str(decision.supertag[1])
                 copy.lexical_types[state.active_node-1] = lex_type
                 term_type = decision.termtyp
                 applyset = lex_type.get_apply_set(term_type)
@@ -308,9 +310,9 @@ class LTF(TransitionSystem):
             return Decision(0, "", ("",""), "", termtyp=None, score=0.0)
 
         score = 0.0
-        constant_scores = scores["constants_scores"]
-        term_type_scores = scores["term_types_scores"]
-        label_scores = scores["edge_labels_scores"]
+        constant_scores = scores["constants_scores"].cpu().numpy()
+        term_type_scores = scores["term_types_scores"].cpu().numpy()
+        label_scores = scores["edge_labels_scores"].cpu().numpy()
 
         selected_constant = ("","")
         selected_term_type = None
@@ -345,7 +347,7 @@ class LTF(TransitionSystem):
 
             assert best_constant is not None #we have to be able to find something here!
             selected_constant = AMSentence.split_supertag(self.additional_lexicon.get_str_repr("constants", best_constant))
-            lexical_type_of_tos = AMType.parse_str(selected_constant[1]) # TODO efficiency
+            lexical_type_of_tos = self.read_cache.parse_str(selected_constant[1]) # TODO efficiency?
             selected_term_type = best_term_type
             applyset_todo_tos = lexical_type_of_tos.get_apply_set(selected_term_type)
             score += max_constant_score
