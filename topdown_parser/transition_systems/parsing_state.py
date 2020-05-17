@@ -86,11 +86,9 @@ class CommonParsingState(ParsingState, ABC):
                 _, typ = self.constants[self.active_node-1]
                 supertag_of_current_node = typ
 
-        no_siblings = len(siblings)
-
         with torch.no_grad():
             ret = {"parents": torch.tensor(np.array([get_parent(self.heads, self.active_node)]), device=device)}
-            sibling_tensor = torch.zeros(max(1,no_siblings), dtype=torch.long, device=device)
+            sibling_tensor = torch.zeros(max(1,len(siblings)), dtype=torch.long, device=device)
             for j, sibling in enumerate(siblings):
                 sibling_tensor[j] = sibling
             ret["siblings"] = sibling_tensor
@@ -127,6 +125,18 @@ def undo_one_batching(context : Dict[str, torch.Tensor]) -> None:
     if "lexical_types" in context:
         context["lexical_types"] = context["lexical_types"].squeeze(2)
 
+
+def undo_one_batching_eval(context : Dict[str, torch.Tensor]) -> None:
+    """
+    The same as above but at test time.
+    :param context:
+    :return:
+    """
+    # context["parents"] has size (batch_size, 1)
+    context["parents"] = context["parents"].squeeze(1)
+
+    if "lexical_types" in context:
+        context["lexical_types"] = context["lexical_types"].squeeze(1)
 
 
 def get_parent(heads : List[int], node : int) -> int:

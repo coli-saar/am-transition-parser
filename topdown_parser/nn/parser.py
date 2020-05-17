@@ -21,9 +21,10 @@ from topdown_parser.nn.EdgeModel import EdgeModel
 from topdown_parser.nn.kg_edge_model import KGEdges
 from topdown_parser.nn.supertagger import Supertagger
 from topdown_parser.nn.utils import get_device_id, index_tensor_dict, batch_and_pad_tensor_dict, expand_tensor_dict
-from topdown_parser.transition_systems.parsing_state import undo_one_batching, ParsingState
+from topdown_parser.transition_systems.parsing_state import undo_one_batching, ParsingState, undo_one_batching_eval
 from topdown_parser.transition_systems.transition_system import TransitionSystem, Decision
 
+import heapq
 
 @Model.register("topdown")
 class TopDownDependencyParser(Model):
@@ -160,10 +161,13 @@ class TopDownDependencyParser(Model):
         if not self.training:
 
             sentences = [s.strip_annotation() for s in sentences]
+            # import cProfile
+            # with cProfile.Profile() as pr:
             if self.k_best == 1:
                 predictions = self.parse_sentences(state, metadata[0]["formalism"], sentences)
             else:
                 predictions = self.beam_search(state, sentences, self.k_best)
+            # print(pr.print_stats())
 
             parsing_time_t1 = time.time()
             avg_parsing_time = (parsing_time_t1 - parsing_time_t0) / batch_size
@@ -605,6 +609,7 @@ class TopDownDependencyParser(Model):
                 # Generate context snapshot of current time-step.
                 current_context : List[Dict[str, torch.Tensor]] = [parsing_states[i].gather_context(device) for i in range(batch_size)]
                 current_context = batch_and_pad_tensor_dict(current_context)
+                undo_one_batching_eval(current_context)
             else:
                 current_context = dict()
 
@@ -736,6 +741,7 @@ class TopDownDependencyParser(Model):
                 for sentence_states in parsing_states:
                     current_context.extend([state.gather_context(device) for state in sentence_states])
                 current_context = batch_and_pad_tensor_dict(current_context)
+                undo_one_batching_eval(current_context)
             else:
                 current_context = dict()
 
@@ -805,15 +811,20 @@ class TopDownDependencyParser(Model):
                                                                                    self.edge_label_model, parsing_state, k)
                     for decision in top_k:
                         all_decisions_for_sentence.append((decision, parsing_state))
+
+                    if step == 0:
+                        # in the first step, we always have that parsing_state is the initial state for that sentence
+                        # and the scores are identical.
+                        break
                 # Find top k overall decisions
-                all_decisions_for_sentence = sorted(all_decisions_for_sentence, reverse=True, key=lambda decision_and_state: decision_and_state[0].score + decision_and_state[1].score)
-                top_k_decisions = all_decisions_for_sentence[:k]
+                #all_decisions_for_sentence = sorted(all_decisions_for_sentence, reverse=True, key=lambda decision_and_state: decision_and_state[0].score + decision_and_state[1].score)
+                top_k_decisions = heapq.nlargest(k, all_decisions_for_sentence, key=lambda decision_and_state: decision_and_state[0].score + decision_and_state[1].score)
                 for decision_nr, (decision, parsing_state) in enumerate(top_k_decisions):
                     next_parsing_state = self.transition_system.step(parsing_state, decision, in_place = False)
                     parsing_states[sentence_id][decision_nr] = next_parsing_state
                     active_nodes.append(next_parsing_state.active_node)
 
-                for _ in range(len(top_k_decisions)-k): #there weren't enough decisions, fill with some parsing state
+                for _ in range(k-len(top_k_decisions)): #there weren't enough decisions, fill with some parsing state
                     active_nodes.append(0)
 
 
