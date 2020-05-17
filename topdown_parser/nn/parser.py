@@ -176,6 +176,7 @@ class TopDownDependencyParser(Model):
                 pred.attributes["normalized_parsing_time"] = str(avg_parsing_time)
                 pred.attributes["batch_size"] = str(batch_size)
                 pred.attributes["host"] = socket.gethostname()
+                pred.attributes["beam_size"] = str(self.k_best)
 
             for p,g in zip(predictions, (m["am_sentence"] for m in metadata)):
                 if p.get_root() == g.get_root():
