@@ -1,5 +1,6 @@
 import math
 from copy import deepcopy
+from typing import List
 
 import torch
 from allennlp.common import Registrable
@@ -103,4 +104,21 @@ class MaEdgeModel(EdgeLabelModel):
 
 
 
+class OracleLabelModel(EdgeLabelModel):
 
+    def __init__(self, lexicon: AdditionalLexicon):
+        super().__init__(lexicon)
+
+    def set_gold_labels(self, labels : List[str]) -> None:
+        self.scores = torch.zeros(len(labels), self.vocab_size)
+
+        for i, label in enumerate(labels):
+            self.scores[i, self.lexicon.get_id("edge_labels", label)] = 1
+
+    def set_input(self, encoded_input : torch.Tensor, mask : torch.Tensor) -> None:
+        self.batch_size = encoded_input.shape[0]
+
+    def edge_label_scores(self, encoder_indices : torch.Tensor, decoder : torch.Tensor) -> torch.Tensor:
+        assert self.batch_size == self.scores.shape[0]
+
+        return self.scores

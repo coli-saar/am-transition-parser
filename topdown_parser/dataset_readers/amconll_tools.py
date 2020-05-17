@@ -122,6 +122,12 @@ class AMSentence:
                                  split[i][1], word.head, word.label, word.aligned,word.range)
                            for i,word in enumerate(self.words)],self.attributes)
 
+    def set_supertag_tuples(self, supertags : List[Tuple[str,str]]):
+        assert len(supertags) == len(self.words), f"number of supertags must agree with number of words but got {len(supertags)} and {len(self.words)}"
+        return AMSentence([Entry(word.token, word.replacement, word.lemma, word.pos_tag, word.ner_tag, supertags[i][0], word.lexlabel,
+                                 supertags[i][1], word.head, word.label, word.aligned,word.range)
+                           for i,word in enumerate(self.words)],self.attributes)
+
     def set_heads(self, heads : List[int]) -> "AMSentence":
         assert len(heads) == len(self.words), f"number of heads must agree with number of words but got {len(heads)} and {len(self.words)}"
         assert all( h >= 0 and h <= len(self.words) for h in heads), f"heads must be in range 0 to {len(self.words)} but got heads {heads}"
@@ -155,6 +161,20 @@ class AMSentence:
         return AMSentence([Entry(word.token, word.replacement, word.lemma, word.pos_tag, word.ner_tag, "_", "_",
                                  "_", 0, "IGNORE", word.aligned, word.range)
                            for word in self.words],self.attributes)
+
+    def children_dict(self) -> Dict[int, List[int]]:
+        """
+        Return dictionary of children, 1-based.
+        :return:
+        """
+        r = dict()
+        for i in range(len(self.words)):
+            head = self.words[i].head # head is 1-based
+            if self.words[i].label != "IGNORE":
+                if head not in r:
+                    r[head] = []
+                r[head].append(i+1) #make current position 1-based
+        return r
 
     def get_root(self) -> Optional[int]:
         """

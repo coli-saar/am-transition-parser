@@ -45,6 +45,13 @@ class ContextProvider(Module, Registrable):
     #     """
     #     raise NotImplementedError()
 
+    def conditions_on(self) -> List[str]:
+        """
+        Returns the dictionary keys that it conditions on. Useful to know when doing beam search.
+        :return:
+        """
+        raise NotImplementedError()
+
 
 
 @ContextProvider.register("no_context")
@@ -52,6 +59,9 @@ class NoContextProvider(ContextProvider):
 
     def forward(self, current_node : torch.Tensor, state : Dict[str, torch.Tensor], context : Dict[str, Any]) -> torch.Tensor:
         return current_node
+
+    def conditions_on(self) -> List[str]:
+        return []
 
 @ContextProvider.register("parent")
 class ParentContextProvider(ContextProvider):
@@ -74,6 +84,9 @@ class ParentContextProvider(ContextProvider):
     def forward(self, current_node : torch.Tensor, state : Dict[str, torch.Tensor], context : Dict[str, Any]) -> torch.Tensor:
 
         return current_node + self.compute_context(state, context)
+
+    def conditions_on(self) -> List[str]:
+        return ["parents"]
 
 
 class MostRecent(ContextProvider):
@@ -170,6 +183,9 @@ class SiblingContextProvider(ContextProvider):
 
         return current_node + self.compute_context(state, context)
 
+    def conditions_on(self) -> List[str]:
+        return ["siblings"]
+
 
 @ContextProvider.register("most-recent-child")
 class SiblingContextProvider(ContextProvider):
@@ -188,6 +204,9 @@ class SiblingContextProvider(ContextProvider):
 
         return current_node + self.compute_context(state, context)
 
+    def conditions_on(self) -> List[str]:
+        return ["children"]
+
 @ContextProvider.register("all-children")
 class AllChildrenContextProvider(ContextProvider):
     """
@@ -204,6 +223,9 @@ class AllChildrenContextProvider(ContextProvider):
     def forward(self, current_node : torch.Tensor, state : Dict[str, torch.Tensor], context : Dict[str, torch.Tensor]) -> torch.Tensor:
 
         return current_node + self.compute_context(state, context)
+
+    def conditions_on(self) -> List[str]:
+        return ["children"]
 
 
 
@@ -227,6 +249,11 @@ class SumContextProver(ContextProvider):
 
         return r
 
+    def conditions_on(self) -> List[str]:
+        r = []
+        for p in self.providers:
+            r.extend(p.conditions_on())
+        return r
 
 @ContextProvider.register("concat")
 class ConcatContextProver(ContextProvider):
@@ -249,6 +276,12 @@ class ConcatContextProver(ContextProvider):
 
         return self.mlp(torch.cat(contexts, dim=1))
 
+    def conditions_on(self) -> List[str]:
+        r = []
+        for p in self.providers:
+            r.extend(p.conditions_on())
+        return r
+
 @ContextProvider.register("plain-concat")
 class PlainConcatContextProver(ContextProvider):
     """
@@ -268,6 +301,12 @@ class PlainConcatContextProver(ContextProvider):
             contexts.append(provider.compute_context(state, context))
 
         return torch.cat(contexts, dim=1)
+
+    def conditions_on(self) -> List[str]:
+        r = []
+        for p in self.providers:
+            r.extend(p.conditions_on())
+        return r
 
 
 @ContextProvider.register("label-embedder")
@@ -291,6 +330,9 @@ class LabelContextProvider(ContextProvider):
 
     def forward(self, current_node : torch.Tensor, state : Dict[str, torch.Tensor], context : Dict[str, torch.Tensor]) -> torch.Tensor:
         return current_node + self.compute_context(state, context)
+
+    def conditions_on(self) -> List[str]:
+        return ["children_labels"]
 
 @ContextProvider.register("last-label-embedder")
 class LastLabelEmbedder(ContextProvider):
@@ -323,6 +365,9 @@ class LastLabelEmbedder(ContextProvider):
 
         return current_node + self.compute_context(state, context)
 
+    def conditions_on(self) -> List[str]:
+        return ["children_labels"]
+
 @ContextProvider.register("type-embedder")
 class TypeContextProvider(ContextProvider):
     """
@@ -342,3 +387,6 @@ class TypeContextProvider(ContextProvider):
 
     def forward(self, current_node : torch.Tensor, state : Dict[str, torch.Tensor], context : Dict[str, torch.Tensor]) -> torch.Tensor:
         return current_node + self.compute_context(state, context)
+
+    def conditions_on(self) -> List[str]:
+        return ["lexical_types"]

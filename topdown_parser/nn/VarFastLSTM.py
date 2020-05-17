@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, List, Any
 
 import torch
 
@@ -156,6 +156,7 @@ class MaLSTMCell(DecoderCell):
         @return:
         """
         self.lstm_cell.reset_noise(batch_size)
+        self.batch_size = batch_size
         self.hidden = torch.zeros(batch_size, self.hidden_dim, device = device)
         self.context = torch.zeros(batch_size, self.hidden_dim, device = device)
 
@@ -177,3 +178,25 @@ class MaLSTMCell(DecoderCell):
 
     def step(self, input : torch.Tensor) -> None:
         self.hidden, self.context = self.lstm_cell.forward(input, (self.hidden, self.context))
+
+
+    def get_full_states(self) -> List[Any]:
+        """
+        Return a full represention of the current state.
+        :return: a list of length batch_size
+        """
+        return [(self.hidden[i], self.context[i]) for i in range(self.batch_size)]
+
+    def set_with_full_states(self, states: List[Any]) -> None:
+        """
+        Takes the output of get_full_states and restores the internal representation.
+        :param states:
+        :return:
+        """
+        hidden = []
+        context = []
+        for h,c in states:
+            hidden.append(h)
+            context.append(c)
+        self.hidden = torch.stack(hidden, dim=0)
+        self.context = torch.stack(context, dim=0)
