@@ -260,6 +260,8 @@ class LTL(TransitionSystem):
                 copy.active_node = 0
         else:
             copy.active_node = 0
+
+        copy.score = copy.score + decision.score
         return copy
 
     def make_decision(self, scores: Dict[str, torch.Tensor], label_model: EdgeLabelModel, state : LTLState) -> Decision:
@@ -409,8 +411,8 @@ class LTL(TransitionSystem):
 
             if state.step == 1 or state.active_node == 0:
                 #we are done (or after first step), do nothing.
-                decisions.append(Decision(0, "", ("",""), "", score=float(children_scores[0])))
-                continue
+                decisions.append(Decision(0, "", ("",""), "", score=0.0))
+                break
 
             if (selected_node in state.seen and not self.pop_with_0) or (selected_node == 0 and self.pop_with_0):
                 # pop node, select constant and lexical label.
@@ -419,9 +421,9 @@ class LTL(TransitionSystem):
                     possible_lex_types = self.apply_cache.by_apply_set(term_typ, frozenset(state.applysets_collected[state.active_node-1]))
                     if possible_lex_types:
                         possible_constants = {constant for lex_type in possible_lex_types for constant in self.typ2supertag[lex_type]}
-                        constant, local_score = get_best_constant(possible_constants, constant_scores)
+                        constant, constant_score = get_best_constant(possible_constants, constant_scores)
                         decisions.append(Decision(pop_node, "", AMSentence.split_supertag(self.additional_lexicon.get_str_repr("constants", constant)),
-                                                  selected_lex_label, score=local_score + node_score))
+                                                  selected_lex_label, score=constant_score + node_score))
                 continue
 
             smallest_apply_set = state.sources_still_to_fill[state.active_node - 1]
@@ -450,7 +452,7 @@ class LTL(TransitionSystem):
                 for edge_id, modify_score in get_top_k_choices(self.modify_ids, label_scores, k):
                     decisions.append(Decision(int(selected_node), self.additional_lexicon.get_str_repr("edge_labels", edge_id), ("",""), "", score = node_score+modify_score))
 
-        return heapq.nlargest(k, decisions, key=lambda decision: decision.score)
+        return decisions
 
 
     def assumes_greedy_ok(self) -> Set[str]:

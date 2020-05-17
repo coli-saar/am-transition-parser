@@ -134,5 +134,5 @@ class DFS(UnconstrainedTransitionSystem):
                 copy.active_node = copy.stack[-1]
         else:
             copy.active_node = 0
-
+        copy.score = copy.score + decision.score
         return copy

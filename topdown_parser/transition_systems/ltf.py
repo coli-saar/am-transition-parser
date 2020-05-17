@@ -284,6 +284,7 @@ class LTF(TransitionSystem):
             copy.active_node = 0
 
         copy.root_determined = True
+        copy.score = copy.score + decision.score
         return copy
 
     def make_decision(self, scores: Dict[str, torch.Tensor], label_model: EdgeLabelModel, state : LTFState) -> Decision:
