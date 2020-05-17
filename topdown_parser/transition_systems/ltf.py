@@ -404,7 +404,148 @@ class LTF(TransitionSystem):
         else:
             raise ValueError("Could not perform any action. Bug.")
 
-    # def step(self, selected_nodes: torch.Tensor, additional_scores : Dict[str, torch.Tensor]) -> Tuple[torch.Tensor, torch.Tensor]:
+    # def top_k_decision(self, scores: Dict[str, torch.Tensor], encoder_state : Dict[str,torch.Tensor],
+    #                    label_model: EdgeLabelModel, state: LTFState, k : int) -> List[Decision]:
+    #
+    #     if state.root_determined and state.active_node == 0:
+    #         return [Decision(0, "", ("",""), "", termtyp=None, score=0.0)]
+    #
+    #     # Select node:
+    #     child_scores = scores["children_scores"] # shape (input_seq_len)
+    #     #Cannot select nodes that we have visited already (except if not pop with 0 and currently active, then we can close).
+    #     forbidden = 0
+    #     nINF = -10e10
+    #     for seen in state.seen:
+    #         if self.pop_with_0 and seen == 0:
+    #             pass
+    #         elif not self.pop_with_0 and seen == state.active_node:
+    #             pass
+    #         else:
+    #             child_scores[seen] = -nINF
+    #             forbidden += 1
+    #
+    #     at_most_k = min(k, len(state.sentence)+1-forbidden) #don't let beam search explore things that are not well-formed.
+    #     children_scores, children = torch.sort(child_scores, descending=True)
+    #     children_scores = children_scores[:at_most_k] #shape (at_most_k)
+    #     children = children[:at_most_k] #shape (at_most_k)
+    #     # Now have k best children
+    #     encoded_input = encoder_state["encoded_input"].repeat((at_most_k, 1, 1)) #shape (at_most_k, seq_len, encoder dim)
+    #     input_mask = encoder_state["input_mask"].repeat((at_most_k, 1, 1)) #shape (at_most_k, seq_len, encoder_dim)
+    #     label_model.set_input(encoded_input,input_mask)
+    #     decoder_hidden = encoder_state["decoder_hidden"] #shape (decoder embedding)
+    #     decoder_hidden = decoder_hidden.repeat((at_most_k, 1)) #shape (at_most_k, decoder embedding)
+    #     label_scores = label_model.edge_label_scores(children, decoder_hidden) #shape (at_most_k, label vocab dim)
+    #
+    #     label_scores, best_labels = torch.max(label_scores, dim=1)
+    #
+    #     children = children.cpu()
+    #     children_scores = children_scores.cpu()
+    #     label_scores = label_scores.cpu()
+    #     term_type_scores = scores["term_types_scores"].cpu().numpy()
+    #     constant_scores = scores["constants_scores"].cpu().numpy()
+    #
+    #     decisions = []
+    #     for selected_node, node_score, label_scores in zip(children, children_scores, label_scores):
+    #
+    #         if not state.root_determined: # First decision must choose root.
+    #             decisions.append(Decision(int(selected_node), "ROOT", ("",""), "",termtyp=None, score=float(node_score)))
+    #             continue
+    #
+    #         selected_constant = ("","")
+    #         selected_term_type = None
+    #         selected_lex_label = "_"
+    #
+    #         lexical_type_of_tos = state.lexical_types[state.active_node-1]
+    #         applyset_todo_tos = state.applysets_todo[state.active_node-1]
+    #         possible_term_types = state.term_types[state.active_node-1]
+    #
+    #         sources_to_be_filled = state.sources_to_be_filled()
+    #
+    #         typing_info : List[Tuple[AMType, AMType]] = []
+    #
+    #         # Greedily choose best constant, if needed at this point.
+    #         if state.constants[state.active_node-1] == ("_","_"):
+    #             # active node needs to get a lexical type, choose one.
+    #             selected_lex_label = single_score_to_selection(scores, self.additional_lexicon, "lex_labels")
+    #
+    #
+    #             max_constant_score = -np.inf
+    #             best_constant = None
+    #             best_term_type = None
+    #
+    #             for term_type in possible_term_types:
+    #                 local_term_type_score = term_type_scores[self.typ2i[term_type]]
+    #                 for lex_type in self.candidate_lex_types.get_candidates(term_type, state.words_left - sources_to_be_filled):
+    #                     best_local_constant, best_local_constant_score = get_best_constant(self.typ2supertag[lex_type], constant_scores)
+    #                     local_decision_score = best_local_constant_score + local_term_type_score
+    #
+    #                     typing_info.append((lex_type, term_type, local_decision_score))
+    #
+    #             assert best_constant is not None #we have to be able to find something here!
+    #             selected_constant = AMSentence.split_supertag(self.additional_lexicon.get_str_repr("constants", best_constant))
+    #             lexical_type_of_tos = self.read_cache.parse_str(selected_constant[1])
+    #             selected_term_type = best_term_type
+    #             applyset_todo_tos = lexical_type_of_tos.get_apply_set(selected_term_type)
+    #             score += max_constant_score
+    #             sources_to_be_filled += len(applyset_todo_tos)
+    #         else:
+    #             typing_info = [(lexical_type_of_tos, possible_term_types, 0.0)]
+    #
+    #
+    #
+    #         assert applyset_todo_tos is not None
+    #
+    #         #Check if we must not close the current node
+    #         if applyset_todo_tos is not None and len(applyset_todo_tos) > 0:
+    #             if self.pop_with_0:
+    #                 child_scores[0] = nINF
+    #             else:
+    #                 child_scores[state.active_node] = nINF
+    #         elif applyset_todo_tos is not None and len(applyset_todo_tos) == 0 and state.words_left - sources_to_be_filled == 0:
+    #             # somewhere in the tree (but not here!) there are sources to fill
+    #             # the number of words left exactly matches that. Since we don't have to fill a source here, we must pop!
+    #             if self.pop_with_0:
+    #                 child_scores[0] = 10e10
+    #             else:
+    #                 child_scores[state.active_node] = 10e10
+    #
+    #         s, selected_node = torch.max(child_scores, dim=0)
+    #         score += s
+    #
+    #         if (selected_node == 0 and self.pop_with_0) or (selected_node == state.active_node and not self.pop_with_0):
+    #             return Decision(int(selected_node), "", selected_constant, selected_lex_label, selected_term_type, score=score)
+    #
+    #         words_left_after_this = state.words_left - 1
+    #
+    #         #Check if we want to do APP or MOD
+    #         max_apply_score = -np.inf
+    #         best_apply_source = None
+    #
+    #         for todo_source in applyset_todo_tos:
+    #             req = lexical_type_of_tos.get_request(todo_source)
+    #             source_score = label_scores[self.additional_lexicon.get_id("edge_labels", "APP_"+todo_source)]
+    #             if not is_empty(self.candidate_lex_types.get_candidates(req, words_left_after_this - (sources_to_be_filled-1))):
+    #                 if source_score >= max_apply_score:
+    #                     best_apply_source = todo_source
+    #                     max_apply_score = source_score
+    #
+    #         # What if we want to modify? Find best mod operation.
+    #         max_mod_score = -np.inf
+    #         best_modify_edge = None
+    #
+    #         if words_left_after_this - sources_to_be_filled >= 0:
+    #             #MOD is allowed, we allow any MOD_m modification because we can always choose a term type that fits in the next step.
+    #             best_modify_edge, max_mod_score = get_best_constant(self.modify_ids, label_scores)
+    #
+    #         if max_apply_score > max_mod_score:
+    #             return Decision(int(selected_node), "APP_"+best_apply_source, selected_constant, selected_lex_label, selected_term_type, score=score+max_apply_score)
+    #         elif max_mod_score > -np.inf:
+    #             return Decision(int(selected_node), self.additional_lexicon.get_str_repr("edge_labels", best_modify_edge), selected_constant, selected_lex_label, selected_term_type, score=score+max_mod_score)
+    #         else:
+    #             raise ValueError("Could not perform any action. Bug.")
+
+
+# def step(self, selected_nodes: torch.Tensor, additional_scores : Dict[str, torch.Tensor]) -> Tuple[torch.Tensor, torch.Tensor]:
     #     device = get_device_id(selected_nodes)
     #     assert selected_nodes.shape == (self.batch_size,)
     #
