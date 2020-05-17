@@ -1,20 +1,63 @@
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import List, Iterable, Optional, Tuple, Dict, Any, Set
 
 import torch
 
 from topdown_parser.am_algebra import AMType, new_amtypes
-from topdown_parser.am_algebra.new_amtypes import ByApplySet, ModCache
+from topdown_parser.am_algebra.new_amtypes import ByApplySet, ModCache, ReadCache
 from topdown_parser.am_algebra.tree import Tree
 from topdown_parser.dataset_readers.AdditionalLexicon import AdditionalLexicon
 from topdown_parser.dataset_readers.amconll_tools import AMSentence
+from topdown_parser.nn.EdgeLabelModel import EdgeLabelModel
 from topdown_parser.nn.utils import get_device_id
 from topdown_parser.transition_systems.ltf import typ2supertag, typ2i, collect_sources
+from topdown_parser.transition_systems.parsing_state import CommonParsingState, ParsingState
 from topdown_parser.transition_systems.transition_system import TransitionSystem, Decision
     #, get_parent, get_siblings
-from topdown_parser.transition_systems.utils import scores_to_selection, get_and_convert_to_numpy, get_best_constant
+from topdown_parser.transition_systems.utils import scores_to_selection, get_and_convert_to_numpy, get_best_constant, \
+    single_score_to_selection
 
 import numpy as np
+
+class LTLState(CommonParsingState):
+
+    def __init__(self, decoder_state: Any, active_node: int, score: float, sentence: AMSentence,
+                 lexicon: AdditionalLexicon, heads: List[int], children: Dict[int, List[int]], edge_labels: List[str],
+                 constants: List[Tuple[str, str]], lex_labels: List[str], stack: List[int], seen: Set[int], substack: List[int],
+                 lexical_types: List[AMType], term_types : List[Set[AMType]], applysets_collected: List[Optional[Set[str]]], words_left : int, root_determined : bool,
+                 sources_still_to_fill: List[int]):
+        super().__init__(decoder_state, active_node, score, sentence, lexicon, heads, children, edge_labels, constants,
+                         lex_labels, stack, seen)
+        self.substack = substack
+        self.lexical_types = lexical_types
+        self.applysets_collected = applysets_collected
+        self.words_left = words_left
+        self.root_determined = root_determined
+        self.term_types = term_types
+
+        self.sources_still_to_fill = sources_still_to_fill
+        self.step = 0
+
+    def copy(self) -> "ParsingState":
+        copy = LTLState(self.decoder_state, self.active_node, self.score, self.sentence,
+                        self.lexicon, list(self.heads), deepcopy(self.children), list(self.edge_labels),
+                        list(self.constants), list(self.lex_labels), list(self.stack), set(self.seen), list(self.substack),
+                        list(self.lexical_types), deepcopy(self.term_types), deepcopy(self.applysets_collected), self.words_left, self.root_determined,
+                        list(self.sources_still_to_fill))
+        copy.step = self.step
+        return copy
+
+
+    def is_complete(self) -> bool:
+        complete = self.stack == []
+
+        if complete:
+            assert sum(self.sources_still_to_fill) == 0
+            assert self.substack == []
+
+        return complete
+
 
 @TransitionSystem.register("ltl")
 class LTL(TransitionSystem):
@@ -56,6 +99,8 @@ class LTL(TransitionSystem):
         self.mod_cache = ModCache(self.typ2i.keys())
 
         self.apply_cache = ByApplySet(self.typ2i.keys())
+
+        self.read_cache = ReadCache()
 
     def predict_supertag_from_tos(self) -> bool:
         return True
@@ -108,242 +153,196 @@ class LTL(TransitionSystem):
                all(x.label == y.label for x, y in zip(gold_sentence, predicted)) and \
                all(x.fragment == y.fragment and x.typ == y.typ for x, y in zip(gold_sentence, predicted))
 
-    def get_additional_choices(self, decision : Decision) -> Dict[str, List[str]]:
-        """
-        Turn a decision into a dictionary of additional choices (beyond the node that is selected)
-        :param decision:
-        :return:
-        """
-        r = dict()
-        if decision.label != "":
-            r["selected_edge_labels"] = [decision.label]
-        if decision.supertag != ("",""):
-            r["selected_constants"] = ["--TYPE--".join(decision.supertag)]
-        if decision.lexlabel != "":
-            r["selected_lex_labels"] = [decision.lexlabel]
+    def initial_state(self, sentence : AMSentence, decoder_state : Any) -> ParsingState:
+        stack = [0]
+        seen = set()
+        substack = []
+        heads = [0 for _ in range(len(sentence))]
+        children = {i: [] for i in range(len(sentence) + 1)}
+        labels = ["IGNORE" for _ in range(len(sentence))]
+        lex_labels = ["_" for _ in range(len(sentence))]
+        constants = [("_","_") for _ in range(len(sentence))]
+        lexical_types = [AMType.parse_str("_") for _ in range(len(sentence))]
+        term_types = [None for _ in range(len(sentence))]
+        applysets_collected = [None for _ in range(len(sentence))]
 
-        return r
+        return LTLState(decoder_state, 0, 0.0, sentence,
+                 self.additional_lexicon, heads, children, labels,
+                 constants, lex_labels, stack, seen, substack,
+                 lexical_types, term_types, applysets_collected, len(sentence), False, [0 for _ in sentence])
 
-    def reset_parses(self, sentences: List[AMSentence], input_seq_len: int) -> None:
-        self.input_seq_len = input_seq_len
-        self.batch_size = len(sentences)
-        self.stack = [[0] for _ in range(self.batch_size)]  # 1-based
-        self.sub_stack = [[] for _ in range(self.batch_size)]  # 1-based
-        self.seen = [{0} for _ in range(self.batch_size)]
-        self.heads = [[0 for _ in range(len(sentence.words))] for sentence in sentences]
-        self.children = [{i: [] for i in range(len(sentence.words) + 1)} for sentence in sentences]  # 1-based
-        self.labels = [["IGNORE" for _ in range(len(sentence.words))] for sentence in sentences]
-        self.lex_labels = [["_" for _ in range(len(sentence.words))] for sentence in sentences]
-        self.supertags = [["_--TYPE--_" for _ in range(len(sentence.words))] for sentence in sentences]
-        self.sentences = sentences
-        self.lexical_types = [[AMType.parse_str("_") for _ in range(len(sentence.words))] for sentence in sentences]
-        self.term_types = [[None for _ in range(len(sentence.words))] for sentence in sentences]
-        self.applysets_collected = [[None for _ in range(len(sentence.words))] for sentence in sentences]
-        self.sources_still_to_fill = [[0 for _ in range(len(sentence.words))] for sentence in sentences]
-        self.words_left = [len(sentence.words) for sentence in sentences]
-        self.sentences = sentences
-        self.root_determined = [False for _ in sentences]
-        self._step = [0 for _ in sentences]
+    def step(self, state: LTLState, decision: Decision, in_place: bool = False) -> ParsingState:
+        if in_place:
+            copy = state
+        else:
+            copy = state.copy()
+        copy.step += 1
 
-    def step(self, selected_nodes: torch.Tensor, additional_scores : Dict[str, torch.Tensor]) -> Tuple[torch.Tensor, torch.Tensor]:
-        device = get_device_id(selected_nodes)
-        assert selected_nodes.shape == (self.batch_size,)
+        if state.stack:
+            position = decision.position
 
-        selected_nodes = selected_nodes.cpu().numpy()
-        label_scores = get_and_convert_to_numpy(additional_scores, "edge_labels_scores") #shape (batch_size, label_vocab)
-        constant_scores = get_and_convert_to_numpy(additional_scores, "constants_scores") # shape (batch_size, constant)
+            if (position in copy.seen and not self.pop_with_0) or \
+                    (position == 0 and self.pop_with_0) or copy.step == 2: #second step is always pop
+                tos = copy.stack.pop()
 
+                if not self.pop_with_0:
+                    assert tos == position
 
-        selected_lex_labels = scores_to_selection(additional_scores, self.additional_lexicon, "lex_labels")
-        #unconstrained_best_labels = scores_to_selection(additional_scores, self.additional_lexicon, "edge_labels")
-        #unconstrained_best_constants = scores_to_selection(additional_scores, self.additional_lexicon, "constants")
+                if tos != 0:
+                    copy.constants[tos - 1] = decision.supertag
+                    lexical_type_tos = self.read_cache.parse_str(decision.supertag[1])
+                    copy.lexical_types[tos - 1] = lexical_type_tos
+                    copy.lex_labels[tos - 1] = decision.lexlabel
 
-        r = []
-        next_choices = []
-        for i in range(self.batch_size):
-            self._step[i] = self._step[i] + 1
-            if self.stack[i]:
-                selected_node_in_batch_element = int(selected_nodes[i])
-                smallest_apply_set = 0
-
-                if (selected_node_in_batch_element in self.seen[i] and not self.pop_with_0) or \
-                        (selected_node_in_batch_element == 0 and self.pop_with_0) and len(self.stack[i]) == 1 and  self.stack[i][-1] == 0:
-                    # Pop artificial root node
-                    self.stack[i].pop()
-                    if self.reverse_push_actions:
-                            self.stack[i].extend(self.sub_stack[i])
-                    else:
-                        self.stack[i].extend(reversed(self.sub_stack[i]))
-                    self.sub_stack[i] = []
-                elif (selected_node_in_batch_element in self.seen[i] and not self.pop_with_0) or \
-                    (selected_node_in_batch_element == 0 and self.pop_with_0):
-                    tos = self.stack[i].pop()
-
-                    if not self.pop_with_0:
-                        assert tos == selected_nodes[i]
-
-                    # determine lexical type:
-                    max_score = -np.inf
-                    best_constant = None
-                    for term_typ in self.term_types[i][tos-1]:
-                        possible_lex_types = self.apply_cache.by_apply_set(term_typ, frozenset(self.applysets_collected[i][tos-1]))
-                        if possible_lex_types:
-                            possible_constants = {constant for lex_type in possible_lex_types for constant in self.typ2supertag[lex_type]}
-                            constant, score = get_best_constant(possible_constants, constant_scores[i])
-                            if score > max_score:
-                                max_score = score
-                                best_constant = constant
-
-                    chosen_lex_type = self.supertag2typ[best_constant]
-                    self.lexical_types[i][tos-1] = chosen_lex_type
-                    self.supertags[i][tos-1] = self.additional_lexicon.get_str_repr("constants", best_constant)
-
-                    if selected_lex_labels is not None:
-                        self.lex_labels[i][tos-1] = selected_lex_labels[i]
-
-                    # now determine term types of children
-                    for child_id in self.children[i][tos]: # 1-based children
+                    #now determine term types of children
+                    for child_id in state.children[tos]: # 1-based children
                         child_id -= 1 # 0-based children
-                        label = self.labels[i][child_id]
+                        label = copy.edge_labels[child_id]
 
-                        self.applysets_collected[i][child_id] = set()
+                        copy.applysets_collected[child_id] = set()
 
                         if label.startswith("APP_"):
                             # get request at source
                             source = label.split("_")[1]
-                            req = chosen_lex_type.get_request(source)
-                            self.term_types[i][child_id] = {req}
+                            req = lexical_type_tos.get_request(source)
+                            copy.term_types[child_id] = {req}
 
                         elif label.startswith("MOD_"):
                             source = label.split("_")[1]
-                            self.term_types[i][child_id] = set(self.mod_cache.get_modifiers_with_source(chosen_lex_type, source))
-
-                        elif label == "ROOT":
-                            pass
+                            copy.term_types[child_id] = set(self.mod_cache.get_modifiers_with_source(lexical_type_tos, source))
                         else:
                             raise ValueError("Somehow the invalid edge label "+label+" was produced")
 
-                    # Pop
-                    if self.reverse_push_actions:
-                        self.stack[i].extend(self.sub_stack[i])
-                    else:
-                        self.stack[i].extend(reversed(self.sub_stack[i]))
-                    self.sub_stack[i] = []
+                if self.reverse_push_actions:
+                    copy.stack.extend(copy.substack)
                 else:
-                    self.heads[i][selected_node_in_batch_element - 1] = self.stack[i][-1]
-                    tos = self.stack[i][-1]
-
-                    self.children[i][self.stack[i][-1]].append(selected_node_in_batch_element)  # 1-based
-                    words_left = self.words_left[i]
-                    self.words_left[i] -= 1
-
-                    if not self.root_determined[i]:
-                        self.labels[i][selected_node_in_batch_element-1] = "ROOT"
-                        self.root_determined[i] = True
-                        self.term_types[i][selected_node_in_batch_element-1] = {AMType.parse_str("()")}
-                        self.applysets_collected[i][selected_node_in_batch_element-1] = set()
-                        smallest_apply_set = 0 # EMPTY type is in the type lexicon, we could stop now.
-                        self.sources_still_to_fill[i][selected_node_in_batch_element - 1] = 0
-                    else:
-                        # Check APPLY
-                        max_apply_score = -np.inf
-                        best_apply_source = None
-                        #best_lex_type = None # for debugging purposes
-                        smallest_apply_set = self.sources_still_to_fill[i][tos - 1]
-
-                        apply_of_tos = self.applysets_collected[i][tos-1]
-                        for term_typ in self.term_types[i][tos-1]:
-                            for lexical_type, apply_set in self.candidate_lex_types.get_candidates_with_apply_set(term_typ, apply_of_tos, words_left + len(apply_of_tos)):
-                                rest_of_apply_set = apply_set - apply_of_tos
-
-                                for source in rest_of_apply_set:
-                                    source_score = label_scores[i, self.additional_lexicon.get_id("edge_labels", "APP_"+source)]
-                                    if source_score > max_apply_score and len(rest_of_apply_set) <= words_left:
-                                        max_apply_score = source_score
-                                        best_apply_source = source
-                                        #best_lex_type = lexical_type
-
-                        # Check MODIFY
-                        max_modify_score = -np.inf
-                        best_modify_edge_id = None
-                        if words_left - smallest_apply_set > 0:
-                            best_modify_edge_id, max_modify_score = get_best_constant(self.modify_ids, label_scores[i])
-
-                        # Apply our choice
-                        if max_modify_score > max_apply_score:
-                            # MOD
-                            self.labels[i][selected_node_in_batch_element - 1] = self.additional_lexicon.get_str_repr("edge_labels",  best_modify_edge_id)
-                        else:
-                            # APP
-                            self.labels[i][selected_node_in_batch_element - 1] = "APP_" + best_apply_source
-                            self.applysets_collected[i][tos-1].add(best_apply_source)
-
-                            # recompute minimum number of sources to fill, needed if we cannot immediately close this node
-                            # because we have apply set so far {op1,op2} but the only lexical type available is (op1,op2,op3,op4,op5)
-                            smallest_apply_set = np.inf
-                            for term_typ in self.term_types[i][tos-1]:
-                                for lexical_type, apply_set in self.candidate_lex_types.get_candidates_with_apply_set(term_typ,
-                                                self.applysets_collected[i][tos-1], words_left + len(self.applysets_collected[i][tos-1])): #TODO self.words_left[i]? Doesn't matter because of taking minimum.
-
-                                    rest_of_apply_set = apply_set - self.applysets_collected[i][tos-1]
-                                    smallest_apply_set = min(smallest_apply_set, len(rest_of_apply_set))
-
-                            self.sources_still_to_fill[i][tos - 1] = smallest_apply_set
-
-                    # push onto stack
-                    self.sub_stack[i].append(selected_node_in_batch_element)
-
-                self.seen[i].add(selected_node_in_batch_element)
-                choices = torch.zeros(self.input_seq_len)
-
-                if not self.stack[i]:
-                    r.append(0)
-                else:
-                    r.append(self.stack[i][-1])
-
-                    if smallest_apply_set == 0: # should be true most of the time.
-                        # we can close the current node:
-                        if self.pop_with_0:
-                            choices[0] = 1
-                        else:
-                            choices[self.stack[i][-1]] = 1
-
-                if self._step[i] == 1: # second step is always 0
-                    choices[0] = 1
-                else:
-                    for child in range(1, len(self.sentences[i]) + 1):  # or we can choose a node that has not been used yet
-                        if child not in self.seen[i]:
-                            choices[child] = 1
-                next_choices.append(choices)
+                    copy.stack.extend(reversed(copy.substack))
+                copy.substack = []
             else:
-                r.append(0)
-                next_choices.append(torch.zeros(self.input_seq_len))
+                tos = copy.stack[-1]
+                copy.heads[position - 1] = tos
 
-        return torch.tensor(r, device=device), torch.stack(next_choices, dim=0)
+                copy.children[tos].append(position)  # 1-based
 
-    def retrieve_parses(self) -> List[AMSentence]:
-        assert all(stack == [] for stack in self.stack)  # all parses complete
+                copy.edge_labels[position - 1] = decision.label
+                copy.words_left -= 1
 
-        sentences = [sentence.set_heads(self.heads[i]) for i, sentence in enumerate(self.sentences)]
-        sentences = [sentence.set_labels(self.labels[i]) for i, sentence in enumerate(sentences)]
-        sentences = [sentence.set_supertags(self.supertags[i]) for i, sentence in enumerate(sentences)]
-        sentences = [sentence.set_lexlabels(self.lex_labels[i]) for i, sentence in enumerate(sentences)]
+                if decision.label.startswith("APP_"):
+                    source = decision.label.split("_")[1]
+                    copy.applysets_collected[copy.active_node-1].add(source)
+                    smallest_apply_set = np.inf
+                    for term_typ in copy.term_types[tos-1]:
+                        for lexical_type, apply_set in self.candidate_lex_types.get_candidates_with_apply_set(term_typ,
+                                copy.applysets_collected[tos-1], copy.words_left + len(state.applysets_collected[tos-1])):
 
-        self.sentences = None
-        self.stack = None
-        self.sub_stack = None
-        self.seen = None
-        self.heads = None
-        self.batch_size = None
-        self.supertags = None
-        self.lex_labels = None
+                            rest_of_apply_set = apply_set - copy.applysets_collected[tos-1]
+                            smallest_apply_set = min(smallest_apply_set, len(rest_of_apply_set))
 
-        return sentences
+                    assert smallest_apply_set < np.inf
+                    copy.sources_still_to_fill[tos-1] = smallest_apply_set
 
-    def gather_context(self, active_nodes: torch.Tensor) -> Dict[str, torch.Tensor]:
-        """
+                elif decision.label == "ROOT" and not copy.root_determined:
+                    copy.term_types[position-1] = {AMType.parse_str("()")}
+                    copy.applysets_collected[position-1] = set()
+                    copy.root_determined = True
 
-        :param active_nodes: tensor of shape (batch_size,) with nodes that are currently on top of the stack.
-        :return:
-        """
-        return super()._gather_context(active_nodes, self.batch_size, self.heads, self.children, self.labels)
+                # push onto stack
+                copy.substack.append(position)
+
+            copy.seen.add(position)
+            if copy.stack:
+                copy.active_node = copy.stack[-1]
+            else:
+                copy.active_node = 0
+        else:
+            copy.active_node = 0
+        return copy
+
+    def make_decision(self, scores: Dict[str, torch.Tensor], label_model: EdgeLabelModel, state : LTLState) -> Decision:
+        # Select node:
+        child_scores = scores["children_scores"].detach().cpu() # shape (input_seq_len)
+        INF = 10e10
+
+        if not state.root_determined: # First decision must choose root.
+            child_scores[0] = -INF
+            s, selected_node = torch.max(child_scores, dim=0)
+            return Decision(int(selected_node), "ROOT", ("",""), "",termtyp=None, score=float(s))
+
+        #Cannot select nodes that we have visited already.
+        for seen in state.seen:
+            if self.pop_with_0 and seen == 0:
+                pass
+            elif not self.pop_with_0 and seen == state.active_node:
+                pass
+            else:
+                child_scores[seen] = -INF
+
+        if state.active_node != 0 and state.sources_still_to_fill[state.active_node-1] > 0:
+            # Cannot close the current node if the smallest apply set reachable from the active node requires is still do add more APP edges.
+            if self.pop_with_0:
+                child_scores[0] = -INF
+            else:
+                child_scores[state.active_node] = -INF
+
+        score = 0.0
+        s, selected_node = torch.max(child_scores, dim=0)
+        score += s
+
+        if state.step == 1 or state.active_node == 0:
+            #we are done (or after first step), do nothing.
+            return Decision(0, "", ("",""), "", score=0.0)
+
+        if (selected_node in state.seen and not self.pop_with_0) or (selected_node == 0 and self.pop_with_0):
+            # pop node, select constant and lexical label.
+            constant_scores = scores["constants_scores"].cpu().numpy()
+            max_score = -np.inf
+            best_constant = None
+            for term_typ in state.term_types[state.active_node-1]:
+                possible_lex_types = self.apply_cache.by_apply_set(term_typ, frozenset(state.applysets_collected[state.active_node-1]))
+                if possible_lex_types:
+                    possible_constants = {constant for lex_type in possible_lex_types for constant in self.typ2supertag[lex_type]}
+                    constant, local_score = get_best_constant(possible_constants, constant_scores)
+                    if local_score > max_score:
+                        max_score = local_score
+                        best_constant = constant
+            assert max_score > -np.inf
+            pop_node = 0 if self.pop_with_0 else state.active_node
+            s, selected_lex_label = single_score_to_selection(scores, self.additional_lexicon, "lex_labels")
+            score += s
+            return Decision(pop_node, "", AMSentence.split_supertag(self.additional_lexicon.get_str_repr("constants", best_constant)), selected_lex_label, score=score)
+
+        # APP or MOD?
+        label_scores = scores["edge_labels_scores"].cpu().numpy()
+
+        max_apply_score = -np.inf
+        best_apply_source = None
+        #best_lex_type = None # for debugging purposes
+        smallest_apply_set = state.sources_still_to_fill[state.active_node - 1]
+
+        apply_of_tos = state.applysets_collected[state.active_node-1]
+        for term_typ in state.term_types[state.active_node-1]:
+            for lexical_type, apply_set in self.candidate_lex_types.get_candidates_with_apply_set(term_typ, apply_of_tos, state.words_left + len(apply_of_tos)):
+                rest_of_apply_set = apply_set - apply_of_tos
+
+                for source in rest_of_apply_set:
+                    source_score = label_scores[self.additional_lexicon.get_id("edge_labels", "APP_"+source)]
+                    if source_score > max_apply_score and len(rest_of_apply_set) <= state.words_left:
+                        max_apply_score = source_score
+                        best_apply_source = source
+                        #best_lex_type = lexical_type
+
+        # Check MODIFY
+        max_modify_score = -np.inf
+        best_modify_edge_id = None
+        if state.words_left - smallest_apply_set > 0:
+            best_modify_edge_id, max_modify_score = get_best_constant(self.modify_ids, label_scores)
+
+        # Apply our choice
+        if max_modify_score > max_apply_score:
+            # MOD
+            return Decision(int(selected_node), self.additional_lexicon.get_str_repr("edge_labels",  best_modify_edge_id), ("",""),"", score=score+max_modify_score)
+        elif max_apply_score > -np.inf:
+            # APP
+            return Decision(int(selected_node), "APP_"+best_apply_source, ("",""),"", score=score+max_apply_score)
+        else:
+            raise ValueError("Could not select action. Bug.")
