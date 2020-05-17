@@ -24,6 +24,7 @@ def get_and_convert_to_numpy(additional_scores : Dict[str, torch.Tensor], key : 
         return additional_scores[key].cpu().numpy()
     return None
 
+
 def get_best_constant(correct_types: Set[int], constant_scores : np.array) -> Tuple[int, float]:
     """
     Returns the best constant in the set of correct_types
@@ -40,6 +41,13 @@ def get_best_constant(correct_types: Set[int], constant_scores : np.array) -> Tu
             best_index = i
             best_score = score
     return best_index, best_score
+
+
+def get_top_k_choices(choices : Set[int], scores : np.array, k : int) -> List[Tuple[int, float]]:
+    ret = []
+    for choice in choices:
+        ret.append((choice, scores[choice]))
+    return sorted(ret, key=lambda p: p[1], reverse=True)[:k]
 
 def is_empty(a : Iterable[Any]) -> bool:
     try:

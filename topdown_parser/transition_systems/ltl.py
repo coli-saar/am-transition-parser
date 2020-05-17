@@ -16,7 +16,9 @@ from topdown_parser.transition_systems.parsing_state import CommonParsingState, 
 from topdown_parser.transition_systems.transition_system import TransitionSystem, Decision
     #, get_parent, get_siblings
 from topdown_parser.transition_systems.utils import scores_to_selection, get_and_convert_to_numpy, get_best_constant, \
-    single_score_to_selection
+    single_score_to_selection, get_top_k_choices
+
+import heapq
 
 import numpy as np
 
@@ -222,10 +224,10 @@ class LTL(TransitionSystem):
                 tos = copy.stack[-1]
                 copy.heads[position - 1] = tos
 
+                assert position <= len(copy.sentence)
                 copy.children[tos].append(position)  # 1-based
 
                 copy.edge_labels[position - 1] = decision.label
-                copy.words_left -= 1
 
                 if decision.label.startswith("APP_"):
                     source = decision.label.split("_")[1]
@@ -245,6 +247,8 @@ class LTL(TransitionSystem):
                     copy.term_types[position-1] = {AMType.parse_str("()")}
                     copy.applysets_collected[position-1] = set()
                     copy.root_determined = True
+
+                copy.words_left -= 1
 
                 # push onto stack
                 copy.substack.append(position)
@@ -346,3 +350,113 @@ class LTL(TransitionSystem):
             return Decision(int(selected_node), "APP_"+best_apply_source, ("",""),"", score=score+max_apply_score)
         else:
             raise ValueError("Could not select action. Bug.")
+
+
+    def top_k_decision(self, scores: Dict[str, torch.Tensor], encoder_state : Dict[str,torch.Tensor],
+                       label_model: EdgeLabelModel, state : LTLState, k : int) -> List[Decision]:
+        # Select node:
+        child_scores = scores["children_scores"] # shape (input_seq_len)
+        #Cannot select nodes that we have visited already (except if not pop with 0 and currently active, then we can close).
+        INF = 10e10
+        forbidden = 0
+        for seen in state.seen:
+            if self.pop_with_0 and seen == 0:
+                pass
+            elif not self.pop_with_0 and seen == state.active_node:
+                pass
+            else:
+                child_scores[seen] = -INF
+                forbidden += 1
+
+        if state.active_node != 0 and state.sources_still_to_fill[state.active_node-1] > 0:
+            # Cannot close the current node if the smallest apply set reachable from the active node requires is still do add more APP edges.
+            if self.pop_with_0:
+                child_scores[0] = -INF
+            else:
+                child_scores[state.active_node] = -INF
+            forbidden += 1
+
+        if not state.root_determined: # First decision must choose root.
+            child_scores[0] = -INF
+            forbidden += 1
+
+        at_most_k = min(k, len(state.sentence)+1-forbidden) #don't let beam search explore things that are not well-formed.
+        children_scores, children = torch.sort(child_scores, descending=True)
+        children_scores = children_scores[:at_most_k] #shape (at_most_k)
+        children = children[:at_most_k] #shape (at_most_k)
+        # Now have k best children
+        encoded_input = encoder_state["encoded_input"].repeat((at_most_k, 1, 1)) #shape (at_most_k, seq_len, encoder dim)
+        input_mask = encoder_state["input_mask"].repeat((at_most_k, 1, 1)) #shape (at_most_k, seq_len, encoder_dim)
+        label_model.set_input(encoded_input,input_mask)
+        decoder_hidden = encoder_state["decoder_hidden"] #shape (decoder embedding)
+        decoder_hidden = decoder_hidden.repeat((at_most_k, 1)) #shape (at_most_k, decoder embedding)
+        label_scores = label_model.edge_label_scores(children, decoder_hidden) #shape (at_most_k, label vocab dim)
+
+        children = children.cpu()
+        children_scores = children_scores.cpu().numpy()
+        label_scores = label_scores.cpu().numpy()
+        constant_scores = scores["constants_scores"].cpu().numpy()
+        lex_label_score, selected_lex_label = single_score_to_selection(scores, self.additional_lexicon, "lex_labels")
+
+        decisions = []
+        for selected_node, node_score, label_scores in zip(children, children_scores, label_scores):
+            assert selected_node.shape == ()
+            assert label_scores.shape == (self.additional_lexicon.vocab_size("edge_labels"),)
+
+            if not state.root_determined:
+                decisions.append(Decision(int(selected_node), "ROOT", ("",""), "",termtyp=None, score=node_score))
+                continue
+
+            if state.step == 1 or state.active_node == 0:
+                #we are done (or after first step), do nothing.
+                decisions.append(Decision(0, "", ("",""), "", score=float(children_scores[0])))
+                continue
+
+            if (selected_node in state.seen and not self.pop_with_0) or (selected_node == 0 and self.pop_with_0):
+                # pop node, select constant and lexical label.
+                pop_node = 0 if self.pop_with_0 else state.active_node
+                for term_typ in state.term_types[state.active_node-1]:
+                    possible_lex_types = self.apply_cache.by_apply_set(term_typ, frozenset(state.applysets_collected[state.active_node-1]))
+                    if possible_lex_types:
+                        possible_constants = {constant for lex_type in possible_lex_types for constant in self.typ2supertag[lex_type]}
+                        constant, local_score = get_best_constant(possible_constants, constant_scores)
+                        decisions.append(Decision(pop_node, "", AMSentence.split_supertag(self.additional_lexicon.get_str_repr("constants", constant)),
+                                                  selected_lex_label, score=local_score + node_score))
+                continue
+
+            smallest_apply_set = state.sources_still_to_fill[state.active_node - 1]
+
+            apply_of_tos = state.applysets_collected[state.active_node-1]
+
+            # APP
+            possible_sources = set()
+            source_to_score = dict()
+            for term_typ in state.term_types[state.active_node-1]:
+                for lexical_type, apply_set in self.candidate_lex_types.get_candidates_with_apply_set(term_typ, apply_of_tos, state.words_left + len(apply_of_tos)):
+                    rest_of_apply_set = apply_set - apply_of_tos
+
+                    for source in rest_of_apply_set:
+                        source_score = label_scores[self.additional_lexicon.get_id("edge_labels", "APP_"+source)]
+
+                        if len(rest_of_apply_set) <= state.words_left:
+                            possible_sources.add(source)
+                            source_to_score[source] = source_score
+
+            for source in sorted(possible_sources, key=lambda source: source_to_score[source], reverse=True)[:k]:
+                decisions.append(Decision(int(selected_node), "APP_"+source, ("", ""), "", score=node_score + source_to_score[source]))
+
+            # MOD
+            if state.words_left - smallest_apply_set > 0:
+                for edge_id, modify_score in get_top_k_choices(self.modify_ids, label_scores, k):
+                    decisions.append(Decision(int(selected_node), self.additional_lexicon.get_str_repr("edge_labels", edge_id), ("",""), "", score = node_score+modify_score))
+
+        return heapq.nlargest(k, decisions, key=lambda decision: decision.score)
+
+
+    def assumes_greedy_ok(self) -> Set[str]:
+        """
+        The dictionary keys of the context provider which we make greedy decisions on in top_k_decisions
+        because we assume these choices won't impact future scores.
+        :return:
+        """
+        return set()
