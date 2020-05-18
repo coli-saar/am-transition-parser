@@ -8,9 +8,9 @@ local SDP_prefix = data_paths["SDP_prefix"];
 local parse_test = true;
 
 local SDP_regex = {
-      "P" : [1, "Precision (?P<value>.+)"],
-      "R" : [2, "Recall (?P<value>.+)"],
-      "F" : [3, "F (?P<value>.+)"] #says: on line 3 (0-based), fetch the F-Score with the given regex.}
+      "P" : [2, "Precision (?P<value>.+)"],
+      "R" : [3, "Recall (?P<value>.+)"],
+      "F" : [4, "F (?P<value>.+)"] #says: on line 3 (0-based), fetch the F-Score with the given regex.}
 } ;
 
 local sdp_evaluator(name) = {
