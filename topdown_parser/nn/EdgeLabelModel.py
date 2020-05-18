@@ -7,10 +7,12 @@ from allennlp.common import Registrable
 from allennlp.data import Vocabulary
 from allennlp.models import Model
 from allennlp.modules import FeedForward
+from allennlp.nn.util import get_range_vector
 from torch.nn import Parameter, Module
 import torch.nn.functional as F
 
 from topdown_parser.dataset_readers.AdditionalLexicon import AdditionalLexicon
+from topdown_parser.nn.utils import get_device_id
 
 
 class EdgeLabelModel(Registrable, Module):
@@ -50,6 +52,8 @@ class SimpleEdgeLabelModel(EdgeLabelModel):
     def set_input(self, encoded_input : torch.Tensor, mask : torch.Tensor) -> None:
         self.encoded_input = encoded_input
         self.mask = mask
+        batch_size = encoded_input.shape[0]
+        self.batch_size_range = get_range_vector(batch_size, get_device_id(encoded_input))
 
     def edge_label_scores(self, encoder_indices : torch.Tensor, decoder : torch.Tensor) -> torch.Tensor:
         """
@@ -59,7 +63,7 @@ class SimpleEdgeLabelModel(EdgeLabelModel):
         :return:
         """
         batch_size, _, encoder_dim = self.encoded_input.shape
-        vectors_in_question = self.encoded_input[range(batch_size),encoder_indices, :]
+        vectors_in_question = self.encoded_input[self.batch_size_range,encoder_indices, :]
         assert vectors_in_question.shape == (batch_size, encoder_dim)
 
         logits = self.output_layer(self.feedforward(torch.cat([vectors_in_question, decoder], dim=1)))

@@ -76,40 +76,41 @@ class CommonParsingState(ParsingState, ABC):
         :return:
         """
 
-        siblings: List[int] = get_siblings(self.children, self.heads, self.active_node)
-        labels_of_other_children = [self.edge_labels[child-1] for child in self.children[self.active_node]]
+        # siblings: List[int] = get_siblings(self.children, self.heads, self.active_node)
+        # labels_of_other_children = [self.edge_labels[child-1] for child in self.children[self.active_node]]
 
-        if self.constants is not None:
-            if self.active_node == 0:
-                supertag_of_current_node = "_"
-            else:
-                _, typ = self.constants[self.active_node-1]
-                supertag_of_current_node = typ
+        # if self.constants is not None:
+        #     if self.active_node == 0:
+        #         supertag_of_current_node = "_"
+        #     else:
+        #         _, typ = self.constants[self.active_node-1]
+        #         supertag_of_current_node = typ
 
         with torch.no_grad():
-            ret = {"parents": torch.tensor(np.array([get_parent(self.heads, self.active_node)]), device=device)}
-            sibling_tensor = torch.zeros(max(1,len(siblings)), dtype=torch.long, device=device)
-            for j, sibling in enumerate(siblings):
-                sibling_tensor[j] = sibling
-            ret["siblings"] = sibling_tensor
-            ret["siblings_mask"] = sibling_tensor != 0  # we initialized with 0 and 0 cannot possibly be a sibling of a node, because it's the artificial root.
+            ret = {"parents": torch.from_numpy(np.array([get_parent(self.heads, self.active_node)])).to(device)}
+            # sibling_tensor = torch.zeros(max(1,len(siblings)), dtype=torch.long, device=device)
+            # for j, sibling in enumerate(siblings):
+            #     sibling_tensor[j] = sibling
+            # ret["siblings"] = sibling_tensor
+            # ret["siblings_mask"] = sibling_tensor != 0  # we initialized with 0 and 0 cannot possibly be a sibling of a node, because it's the artificial root.
 
-            children_tensor = torch.zeros(max(1, len(self.children[self.active_node])), dtype=torch.long, device=device)
+            children_tensor = torch.zeros(max(1, len(self.children[self.active_node])), dtype=torch.long)
             for j, child in enumerate(self.children[self.active_node]):
                 children_tensor[j] = child
+            children_tensor = children_tensor.to(device)
             ret["children"] = children_tensor
             ret["children_mask"] = (children_tensor != 0) # 0 cannot be a child of a node.
 
-            if "edge_labels" in self.lexicon.sublexica:
-                # edge labels of other children:
-                label_tensor = torch.zeros(max(1, len(labels_of_other_children)), dtype=torch.long, device=device)
-                for j, label in enumerate(labels_of_other_children):
-                    label_tensor[j] = self.lexicon.get_id("edge_labels", label)
-                ret["children_labels"] = label_tensor
+            # if "edge_labels" in self.lexicon.sublexica:
+            #     # edge labels of other children:
+            #     label_tensor = torch.zeros(max(1, len(labels_of_other_children)), dtype=torch.long, device=device)
+            #     for j, label in enumerate(labels_of_other_children):
+            #         label_tensor[j] = self.lexicon.get_id("edge_labels", label)
+            #     ret["children_labels"] = label_tensor
                 #mask is children_mask
 
-            if "term_types" in self.lexicon.sublexica and self.constants is not None:
-                ret["lexical_types"] = torch.tensor(np.array([self.lexicon.get_id("term_types", supertag_of_current_node)]), dtype=torch.long, device=device)
+            # if "term_types" in self.lexicon.sublexica and self.constants is not None:
+            #     ret["lexical_types"] = torch.tensor(np.array([self.lexicon.get_id("term_types", supertag_of_current_node)]), dtype=torch.long, device=device)
 
             return ret
 
