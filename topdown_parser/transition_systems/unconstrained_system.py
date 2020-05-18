@@ -41,8 +41,13 @@ class UnconstrainedTransitionSystem(TransitionSystem):
         score += s
         s, selected_label = single_score_to_selection(scores, self.additional_lexicon, "edge_labels")
         score += s
-        s, selected_supertag = single_score_to_selection(scores, self.additional_lexicon, "constants")
-        score += s
+
+        if "constants" in scores:
+            s, selected_supertag = single_score_to_selection(scores, self.additional_lexicon, "constants")
+            score += s
+        else:
+            selected_supertag = AMSentence.get_bottom_supertag()
+
         s, selected_lex_label = single_score_to_selection(scores, self.additional_lexicon, "lex_labels")
         score += s
 

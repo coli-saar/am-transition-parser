@@ -161,7 +161,7 @@ class QdTopDownDependencyParser(TopDownDependencyParser):
                 predictions = self.parse_sentences(self.unconstrained_transition_system, state,
                                                    metadata[0]["formalism"], sentences, None)
             else:
-                predictions = self.beam_search(self.unconstrained_transition_system, state, sentences, None)
+                predictions = self.beam_search(self.unconstrained_transition_system, state, sentences, self.k_best, None)
 
             children_label_rep = self.tensorize_edges(predictions, get_device_id(pos_tags))
 
@@ -170,7 +170,7 @@ class QdTopDownDependencyParser(TopDownDependencyParser):
                 predictions = self.parse_sentences(self.transition_system, state, metadata[0]["formalism"],
                                                    sentences, children_label_rep)
             else:
-                predictions = self.beam_search(self.transition_system, state, sentences, None)
+                predictions = self.beam_search(self.transition_system, state, sentences, self.k_best, children_label_rep)
 
             parsing_time_t1 = time.time()
             avg_parsing_time = (parsing_time_t1 - parsing_time_t0) / batch_size
@@ -225,15 +225,21 @@ class QdTopDownDependencyParser(TopDownDependencyParser):
         """
         state = self.encode(words, pos_tags, lemmas, ner_tags)  # shape (batch_size, seq_len, encoder_dim)
 
-        # Initialize decoder
-        self.init_decoder(state)
+        sentences : List[AMSentence] = [ m["am_sentence"] for m in metadata]
+        # Parse unconstrained
+        predictions = self.parse_sentences(self.unconstrained_transition_system, state,
+                                           metadata[0]["formalism"], sentences, None)
 
+        children_label_rep = self.tensorize_edges(predictions, get_device_id(pos_tags))
+
+
+        #Parse with constraints, conditioning on predicted edge labels.
         sentence_loss = self.compute_sentence_loss(state, seq, active_nodes,
                                                    labels, label_mask,
                                                    supertags, supertag_mask,
                                                    lex_labels, lex_label_mask,
                                                    term_types, term_type_mask,
-                                                   heads, context)
+                                                   heads, context, children_label_rep)
         sentence_loss = sentence_loss.detach().cpu().numpy()
         batch_size = sentence_loss.shape[0]
 
@@ -408,10 +414,12 @@ class QdTopDownDependencyParser(TopDownDependencyParser):
             else:
                 relevant_nodes_for_supertagging = target_gold_edges
 
+            decoder_hidden_tagging_with_label_rep = torch.cat((decoder_hidden_tagging, children_label_rep[range_batch_size, relevant_nodes_for_supertagging]), dim=1)
+
             # Compute supertagging loss
             if self.supertagger is not None and torch.any(bool_supertag_mask[:, step+1]):
                 supertagging_loss, supertags_correct, supertag_decisions = \
-                    self.compute_tagging_loss(self.supertagger, decoder_hidden_tagging, relevant_nodes_for_supertagging, supertag_mask[:, step+1], supertags[:, step+1])
+                    self.compute_tagging_loss(self.supertagger, decoder_hidden_tagging_with_label_rep, relevant_nodes_for_supertagging, supertag_mask[:, step+1], supertags[:, step+1])
 
                 self.supertags_correct += supertags_correct
                 self.supertag_decisions += supertag_decisions
@@ -430,7 +438,7 @@ class QdTopDownDependencyParser(TopDownDependencyParser):
 
             if self.term_type_tagger is not None and term_types is not None:
                 term_type_loss, term_types_correct, term_type_decisions = \
-                    self.compute_tagging_loss(self.term_type_tagger, decoder_hidden_tagging, relevant_nodes_for_supertagging, term_type_mask[:, step+1], term_types[:, step+1])
+                    self.compute_tagging_loss(self.term_type_tagger, decoder_hidden_tagging_with_label_rep, relevant_nodes_for_supertagging, term_type_mask[:, step+1], term_types[:, step+1])
 
                 self.term_types_correct += term_types_correct
                 self.term_type_decisions += term_type_decisions
@@ -439,7 +447,8 @@ class QdTopDownDependencyParser(TopDownDependencyParser):
 
         return -loss
 
-    def parse_sentences(self, state: Dict[str, torch.Tensor], formalism : str, sentences: List[AMSentence]) -> List[AMSentence]:
+    def parse_sentences(self, transition_system : TransitionSystem, state: Dict[str, torch.Tensor], formalism : str, sentences: List[AMSentence],
+                        children_label_rep : torch.Tensor) -> List[AMSentence]:
         """
         Parses the sentences.
         :param sentences:
@@ -461,7 +470,7 @@ class QdTopDownDependencyParser(TopDownDependencyParser):
 
         range_batch_size = get_range_vector(batch_size, device)
 
-        parsing_states = [self.transition_system.initial_state(sentence, None) for sentence in sentences]
+        parsing_states = [transition_system.initial_state(sentence, None) for sentence in sentences]
 
         for step in range(output_seq_len):
             encoding_current_node = state["encoded_input"][range_batch_size, next_active_nodes]
@@ -502,14 +511,18 @@ class QdTopDownDependencyParser(TopDownDependencyParser):
             scores["edge_labels_scores"] = F.log_softmax(edge_label_scores,1)
 
             #####################
-            if self.transition_system.predict_supertag_from_tos():
+            if transition_system.predict_supertag_from_tos():
                 relevant_nodes_for_supertagging = next_active_nodes
             else:
                 relevant_nodes_for_supertagging = selected_nodes
 
+            if children_label_rep is not None:
+                #(batch_size, decoder dim) + (batch_size, embedding dim)
+                decoder_hidden_tagging_with_label_rep = torch.cat((decoder_hidden_tagging, children_label_rep[range_batch_size, relevant_nodes_for_supertagging]), dim=1)
+
             #Compute supertags:
-            if self.supertagger is not None:
-                supertag_scores = self.supertagger.tag_scores(decoder_hidden_tagging, relevant_nodes_for_supertagging)
+            if self.supertagger is not None and children_label_rep is not None:
+                supertag_scores = self.supertagger.tag_scores(decoder_hidden_tagging_with_label_rep, relevant_nodes_for_supertagging)
                 assert supertag_scores.shape == (batch_size, self.supertagger.vocab_size)
 
                 scores["constants_scores"] = F.log_softmax(supertag_scores,1)
@@ -520,8 +533,8 @@ class QdTopDownDependencyParser(TopDownDependencyParser):
 
                 scores["lex_labels_scores"] = F.log_softmax(lex_label_scores,1)
 
-            if self.term_type_tagger is not None:
-                term_type_scores = self.term_type_tagger.tag_scores(decoder_hidden_tagging, relevant_nodes_for_supertagging)
+            if self.term_type_tagger is not None and children_label_rep is not None:
+                term_type_scores = self.term_type_tagger.tag_scores(decoder_hidden_tagging_with_label_rep, relevant_nodes_for_supertagging)
                 assert term_type_scores.shape == (batch_size, self.term_type_tagger.vocab_size)
 
                 scores["term_types_scores"] = F.log_softmax(term_type_scores, 1)
@@ -529,8 +542,8 @@ class QdTopDownDependencyParser(TopDownDependencyParser):
             ### Update current node according to transition system:
             active_nodes = []
             for i, parsing_state in enumerate(parsing_states):
-                decision = self.transition_system.make_decision(index_tensor_dict(scores,i), self.edge_label_model, parsing_state)
-                parsing_states[i] = self.transition_system.step(parsing_state, decision, in_place = True)
+                decision = transition_system.make_decision(index_tensor_dict(scores,i), self.edge_label_model, parsing_state)
+                parsing_states[i] = transition_system.step(parsing_state, decision, in_place = True)
                 active_nodes.append(parsing_states[i].active_node)
 
             next_active_nodes = torch.tensor(active_nodes, dtype=torch.long, device=device)
@@ -543,7 +556,8 @@ class QdTopDownDependencyParser(TopDownDependencyParser):
         return [state.extract_tree() for state in parsing_states]
 
 
-    def beam_search(self, encoder_state: Dict[str, torch.Tensor], sentences: List[AMSentence], k : int) -> List[AMSentence]:
+    def beam_search(self, transition_system: TransitionSystem, encoder_state: Dict[str, torch.Tensor], sentences: List[AMSentence], k : int,
+                    children_label_rep : torch.Tensor) -> List[AMSentence]:
         """
         Parses the sentences.
         :param sentences:
@@ -580,9 +594,9 @@ class QdTopDownDependencyParser(TopDownDependencyParser):
         parsing_states : List[List[ParsingState]] = []
         decoder_states_full = self.decoder.get_full_states()
         for i, sentence in enumerate(sentences):
-            parsing_states.append([self.transition_system.initial_state(sentence, decoder_states_full[k*i+p]) for p in range(k)])
+            parsing_states.append([transition_system.initial_state(sentence, decoder_states_full[k*i+p]) for p in range(k)])
 
-        assumes_greedy_ok = self.transition_system.assumes_greedy_ok()
+        assumes_greedy_ok = transition_system.assumes_greedy_ok()
         condition_on = set()
         if self.context_provider is not None:
             condition_on = set(self.context_provider.conditions_on())
@@ -629,14 +643,18 @@ class QdTopDownDependencyParser(TopDownDependencyParser):
                                                 "inverted_input_mask" : inverted_input_mask}
 
             #####################
-            if self.transition_system.predict_supertag_from_tos():
+            if transition_system.predict_supertag_from_tos():
                 relevant_nodes_for_supertagging = next_active_nodes
             else:
                 relevant_nodes_for_supertagging = selected_nodes
 
+            if children_label_rep is not None:
+                #(batch_size, decoder dim) + (batch_size, embedding dim)
+                decoder_hidden_tagging_with_label_rep = torch.cat((decoder_hidden_tagging, children_label_rep[range_batch_size, relevant_nodes_for_supertagging]), dim=1)
+
             #Compute supertags:
-            if self.supertagger is not None:
-                supertag_scores = self.supertagger.tag_scores(decoder_hidden_tagging, relevant_nodes_for_supertagging)
+            if self.supertagger is not None and decoder_hidden_tagging_with_label_rep is not None:
+                supertag_scores = self.supertagger.tag_scores(decoder_hidden_tagging_with_label_rep, relevant_nodes_for_supertagging)
                 assert supertag_scores.shape == (k*batch_size, self.supertagger.vocab_size)
 
                 scores["constants_scores"] = F.log_softmax(supertag_scores,1)
@@ -647,8 +665,8 @@ class QdTopDownDependencyParser(TopDownDependencyParser):
 
                 scores["lex_labels_scores"] = F.log_softmax(lex_label_scores,1)
 
-            if self.term_type_tagger is not None:
-                term_type_scores = self.term_type_tagger.tag_scores(decoder_hidden_tagging, relevant_nodes_for_supertagging)
+            if self.term_type_tagger is not None and decoder_hidden_tagging_with_label_rep is not None:
+                term_type_scores = self.term_type_tagger.tag_scores(decoder_hidden_tagging_with_label_rep, relevant_nodes_for_supertagging)
                 assert term_type_scores.shape == (k*batch_size, self.term_type_tagger.vocab_size)
 
                 scores["term_types_scores"] = F.log_softmax(term_type_scores, 1)
@@ -661,7 +679,7 @@ class QdTopDownDependencyParser(TopDownDependencyParser):
                 all_decisions_for_sentence = []
                 for i, parsing_state in enumerate(sentence):
                     parsing_state.decoder_state = decoder_states_full[k*sentence_id+i]
-                    top_k : List[Decision] = self.transition_system.top_k_decision(index_tensor_dict(scores,k*sentence_id+i),
+                    top_k : List[Decision] = transition_system.top_k_decision(index_tensor_dict(scores,k*sentence_id+i),
                                                                                    index_tensor_dict(encoder_state,k*sentence_id+i),
                                                                                    self.edge_label_model, parsing_state, k)
                     for decision in top_k:
@@ -675,7 +693,7 @@ class QdTopDownDependencyParser(TopDownDependencyParser):
                 #all_decisions_for_sentence = sorted(all_decisions_for_sentence, reverse=True, key=lambda decision_and_state: decision_and_state[0].score + decision_and_state[1].score)
                 top_k_decisions = heapq.nlargest(k, all_decisions_for_sentence, key=lambda decision_and_state: decision_and_state[0].score + decision_and_state[1].score)
                 for decision_nr, (decision, parsing_state) in enumerate(top_k_decisions):
-                    next_parsing_state = self.transition_system.step(parsing_state, decision, in_place = False)
+                    next_parsing_state = transition_system.step(parsing_state, decision, in_place = False)
                     parsing_states[sentence_id][decision_nr] = next_parsing_state
                     active_nodes.append(next_parsing_state.active_node)
 
