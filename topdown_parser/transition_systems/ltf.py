@@ -432,6 +432,10 @@ class LTF(TransitionSystem):
     def top_k_decision(self, scores: Dict[str, torch.Tensor], encoder_state : Dict[str,torch.Tensor],
                        label_model: EdgeLabelModel, state: LTFState, k : int) -> List[Decision]:
 
+        if k == 1:
+            raise ValueError("This currently doesn't work for k=1 because the locally best lexical type doesn't "
+                             "necessarily fit to the locally best child")
+
         if state.root_determined and state.active_node == 0:
             return [Decision(0, "", ("",""), "", termtyp=None, score=0.0)]
 
@@ -550,7 +554,7 @@ class LTF(TransitionSystem):
                                                   score=node_score + source_to_score[source]))
 
                     if words_left_after_this - sources_to_be_filled >= 0:
-                        for edge_id, modify_score in  top_k_mod_choices:
+                        for edge_id, modify_score in top_k_mod_choices:
                             decisions.append(Decision(int(selected_node), self.additional_lexicon.get_str_repr("edge_labels", edge_id), ("",""), "_", None,
                                                       score=node_score + modify_score))
 

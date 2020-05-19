@@ -1,5 +1,6 @@
 import argparse
 import sys
+import time
 from typing import List, Dict, Any
 
 import torch
@@ -38,5 +39,8 @@ if __name__ == "__main__":
 
     pipelinepieces = PipelineTrainerPieces.from_params(config)
 
+    t0 = time.time()
     pipelinepieces.annotator.annotate_file(model, args.input_file, args.output_file)
+    t1 = time.time()
+    print("Prediction took", t1-t0, "seconds")
 

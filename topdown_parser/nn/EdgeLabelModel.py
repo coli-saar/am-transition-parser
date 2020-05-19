@@ -126,3 +126,16 @@ class OracleLabelModel(EdgeLabelModel):
         assert self.batch_size == self.scores.shape[0]
 
         return self.scores
+
+
+class FuzzLabelModel(EdgeLabelModel):
+
+    def __init__(self, lexicon: AdditionalLexicon):
+        super().__init__(lexicon)
+
+    def set_input(self, encoded_input : torch.Tensor, mask : torch.Tensor) -> None:
+        self.batch_size = encoded_input.shape[0]
+
+    def edge_label_scores(self, encoder_indices : torch.Tensor, decoder : torch.Tensor) -> torch.Tensor:
+
+        return torch.rand((self.batch_size, self.vocab_size), device=get_device_id(decoder))

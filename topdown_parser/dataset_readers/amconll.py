@@ -20,8 +20,10 @@ from .ContextField import ContextField
 from .amconll_tools import parse_amconll, AMSentence
 from ..am_algebra.tools import is_welltyped
 from topdown_parser.transition_systems.transition_system import TransitionSystem
-from ..nn.EdgeLabelModel import OracleLabelModel
+from ..nn.EdgeLabelModel import OracleLabelModel, FuzzLabelModel
 from ..transition_systems.parsing_state import ParsingState
+
+from tqdm import tqdm
 
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
 
@@ -45,8 +47,12 @@ class AMConllDatasetReader(OrderedDatasetReader):
                  workers : int = 1,
                  run_oracle : bool = True,
                  fuzz: bool = False,
+                 fuzz_beam_search : bool = False,
+                 use_tqdm : bool = False,
                  only_read_fraction_if_train_in_filename: bool = False) -> None:
         super().__init__(lazy)
+        self.use_tqdm = use_tqdm
+        self.fuzz_beam_search = fuzz_beam_search
         self.fuzz = fuzz
         self.run_oracle = run_oracle
         self.workers = workers
@@ -78,6 +84,8 @@ class AMConllDatasetReader(OrderedDatasetReader):
         if self.workers < 2: #or self.workers >= len(sents):
             #import cProfile
             #with cProfile.Profile() as pr:
+            if self.use_tqdm:
+                sents = tqdm(sents)
             r = [self.text_to_instance(s) for s in sents]
             #pr.print_stats()
         else:
@@ -205,6 +213,24 @@ class AMConllDatasetReader(OrderedDatasetReader):
             for _ in range(2*len(stripped_sentence)+1):
                 scores = self.transition_system.fuzz_scores(stripped_sentence)
                 decision = self.transition_system.make_decision(scores, oracel_edge_model, state)
+                state = self.transition_system.step(state, decision, in_place=True)
+
+            assert state.is_complete()
+            assert is_welltyped(state.extract_tree())
+            torch.random.set_rng_state(rng_state)
+
+        if self.fuzz_beam_search:
+            rng_state = torch.random.get_rng_state()
+            stripped_sentence = am_sentence.strip_annotation()
+            hash_value = len(am_sentence) + sum(self.lexicon.get_id("edge_labels", w.label) for w in am_sentence.words)
+            torch.random.manual_seed(hash_value)
+            state : ParsingState = self.transition_system.initial_state(stripped_sentence, None)
+            fuzz_edge_model = FuzzLabelModel(self.lexicon)
+            for _ in range(2*len(stripped_sentence)+1):
+                scores = self.transition_system.fuzz_scores(stripped_sentence)
+                ones = torch.ones(len(am_sentence)+1)
+                encoder_state = {"encoded_input" : ones , "input_mask" : ones, "decoder_hidden" : ones} #dummy values
+                decision = self.transition_system.top_k_decision(scores, encoder_state, fuzz_edge_model, state, k=4)[0]
                 state = self.transition_system.step(state, decision, in_place=True)
 
             assert state.is_complete()
