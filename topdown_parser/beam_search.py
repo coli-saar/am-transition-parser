@@ -11,10 +11,10 @@ from allenpipeline import Annotator, OrderedDatasetReader, PipelineTrainerPieces
 from allenpipeline.Decoder import split_up
 import allennlp.nn.util as util
 
-from topdown_parser.dataset_readers.same_formalism_iterator import SameFormalismIterator
 
 if __name__ == "__main__":
     import_submodules("topdown_parser")
+    from topdown_parser.dataset_readers.same_formalism_iterator import SameFormalismIterator
 
     optparser = argparse.ArgumentParser(add_help=True,
                                         description="Parse an amconll file (no annotions) with beam search.")
