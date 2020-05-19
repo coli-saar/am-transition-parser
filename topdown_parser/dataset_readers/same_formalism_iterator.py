@@ -48,6 +48,7 @@ class SameFormalismIterator(DataIterator):
                          max_instances_in_memory=max_instances_in_memory,
                          maximum_samples_per_batch=maximum_samples_per_batch)
         self.bucket_iterators = dict()
+        self.formalisms = formalisms
         for formalism in formalisms:
             self.bucket_iterators[formalism] = BucketIterator(sorting_keys=[("words","num_tokens")],
                                                               batch_size=batch_size,

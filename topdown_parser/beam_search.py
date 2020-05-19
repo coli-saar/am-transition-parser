@@ -11,6 +11,7 @@ from allenpipeline import Annotator, OrderedDatasetReader, PipelineTrainerPieces
 from allenpipeline.Decoder import split_up
 import allennlp.nn.util as util
 
+from topdown_parser.dataset_readers.same_formalism_iterator import SameFormalismIterator
 
 if __name__ == "__main__":
     import_submodules("topdown_parser")
@@ -23,6 +24,7 @@ if __name__ == "__main__":
     optparser.add_argument('output_file', type=str, help='path to output file')
     optparser.add_argument('--cuda-device', type=int, default=0, help='id of GPU to use. Use -1 to compute on CPU.')
     optparser.add_argument('--beam', type=int, default=2, help='beam size. Default: 2')
+    optparser.add_argument("--batch_size", type=int, default=None, help="Overwrite batch size.")
 
     args = optparser.parse_args()
 
@@ -38,6 +40,11 @@ if __name__ == "__main__":
     model.k_best = args.beam
 
     pipelinepieces = PipelineTrainerPieces.from_params(config)
+
+    if args.batch_size is not None and args.batch_size > 0:
+        assert isinstance(pipelinepieces.annotator.data_iterator, SameFormalismIterator)
+        iterator : SameFormalismIterator = pipelinepieces.annotator.data_iterator
+        pipelinepieces.annotator.data_iterator = SameFormalismIterator(iterator.formalisms, args.batch_size)
 
     t0 = time.time()
     pipelinepieces.annotator.annotate_file(model, args.input_file, args.output_file)

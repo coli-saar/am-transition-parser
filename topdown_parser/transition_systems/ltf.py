@@ -74,7 +74,7 @@ class LTFState(CommonParsingState):
         return LTFState(self.decoder_state, self.active_node, self.score, self.sentence,
                         self.lexicon, list(self.heads), deepcopy(self.children), list(self.edge_labels),
                         list(self.constants), list(self.lex_labels), list(self.stack), set(self.seen),
-                        list(self.lexical_types), deepcopy(self.term_types), deepcopy(self.applysets_todo), self.words_left, self.root_determined)
+                        list(self.lexical_types), [set(s) for s in self.term_types], deepcopy(self.applysets_todo), self.words_left, self.root_determined)
 
     def sources_to_be_filled(self) -> int:
         return sum(len(a) if a is not None else 0 for a in self.applysets_todo)
