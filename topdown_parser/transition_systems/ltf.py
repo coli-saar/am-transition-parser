@@ -290,7 +290,7 @@ class LTF(TransitionSystem):
         copy.score = copy.score + decision.score
         return copy
 
-    def make_decision(self, scores: Dict[str, torch.Tensor], label_model: EdgeLabelModel, state : LTFState) -> Decision:
+    def make_decision(self, scores: Dict[str, torch.Tensor], state : LTFState) -> Decision:
         # Select node:
         child_scores = scores["children_scores"].detach().cpu() # shape (input_seq_len)
         #Cannot select nodes that we have visited already.
@@ -429,8 +429,7 @@ class LTF(TransitionSystem):
 
         return heapq.nlargest(k, typing_info, key=lambda tupl: tupl[-1])
 
-    def top_k_decision(self, scores: Dict[str, torch.Tensor], encoder_state : Dict[str,torch.Tensor],
-                       label_model: EdgeLabelModel, state: LTFState, k : int) -> List[Decision]:
+    def top_k_decision(self, scores: Dict[str, torch.Tensor], state: LTFState, k : int) -> List[Decision]:
 
         if k == 1:
             raise ValueError("This currently doesn't work for k=1 because the locally best lexical type doesn't "
@@ -474,16 +473,12 @@ class LTF(TransitionSystem):
             at_most_k += 1
 
         # Now we have k best children
-        encoded_input = encoder_state["encoded_input"].repeat((at_most_k, 1, 1)) #shape (at_most_k, seq_len, encoder dim)
-        input_mask = encoder_state["input_mask"].repeat((at_most_k, 1, 1)) #shape (at_most_k, seq_len, encoder_dim)
-        label_model.set_input(encoded_input,input_mask)
-        decoder_hidden = encoder_state["decoder_hidden"] #shape (decoder embedding)
-        decoder_hidden = decoder_hidden.repeat((at_most_k, 1)) #shape (at_most_k, decoder embedding)
-        label_scores = label_model.edge_label_scores(children, decoder_hidden) #shape (at_most_k, label vocab dim)
 
-        children = children.cpu()
-        children_scores = children_scores.cpu()
-        label_scores = label_scores.cpu()
+        label_scores = scores["all_labels_scores"][children] #(at_most_k, label vocab_size)
+
+        children = children.cpu().numpy()
+        children_scores = children_scores.cpu().numpy()
+        label_scores = label_scores.cpu().numpy()
 
         _, selected_lex_label = single_score_to_selection(scores, self.additional_lexicon, "lex_labels")
 

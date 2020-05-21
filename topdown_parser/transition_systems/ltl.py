@@ -264,7 +264,7 @@ class LTL(TransitionSystem):
         copy.score = copy.score + decision.score
         return copy
 
-    def make_decision(self, scores: Dict[str, torch.Tensor], label_model: EdgeLabelModel, state : LTLState) -> Decision:
+    def make_decision(self, scores: Dict[str, torch.Tensor], state : LTLState) -> Decision:
         # Select node:
         child_scores = scores["children_scores"].detach().cpu() # shape (input_seq_len)
         INF = 10e10
@@ -354,10 +354,9 @@ class LTL(TransitionSystem):
             raise ValueError("Could not select action. Bug.")
 
 
-    def top_k_decision(self, scores: Dict[str, torch.Tensor], encoder_state : Dict[str,torch.Tensor],
-                       label_model: EdgeLabelModel, state : LTLState, k : int) -> List[Decision]:
+    def top_k_decision(self, scores: Dict[str, torch.Tensor], state : LTLState, k : int) -> List[Decision]:
         # Select node:
-        child_scores = scores["children_scores"] # shape (input_seq_len)
+        child_scores = scores["children_scores"].cpu() # shape (input_seq_len)
         #Cannot select nodes that we have visited already (except if not pop with 0 and currently active, then we can close).
         INF = 10e10
         forbidden = 0
@@ -387,14 +386,10 @@ class LTL(TransitionSystem):
         children_scores = children_scores[:at_most_k] #shape (at_most_k)
         children = children[:at_most_k] #shape (at_most_k)
         # Now have k best children
-        encoded_input = encoder_state["encoded_input"].repeat((at_most_k, 1, 1)) #shape (at_most_k, seq_len, encoder dim)
-        input_mask = encoder_state["input_mask"].repeat((at_most_k, 1, 1)) #shape (at_most_k, seq_len, encoder_dim)
-        label_model.set_input(encoded_input,input_mask)
-        decoder_hidden = encoder_state["decoder_hidden"] #shape (decoder embedding)
-        decoder_hidden = decoder_hidden.repeat((at_most_k, 1)) #shape (at_most_k, decoder embedding)
-        label_scores = label_model.edge_label_scores(children, decoder_hidden) #shape (at_most_k, label vocab dim)
 
-        children = children.cpu()
+        label_scores = scores["all_labels_scores"][children] # (at_most_k, label vocab size)
+
+        children = children.cpu().numpy()
         children_scores = children_scores.cpu().numpy()
         label_scores = label_scores.cpu().numpy()
         constant_scores = scores["constants_scores"].cpu().numpy()

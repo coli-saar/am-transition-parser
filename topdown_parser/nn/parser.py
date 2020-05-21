@@ -638,7 +638,7 @@ class TopDownDependencyParser(Model):
             edge_label_scores = self.edge_label_model.edge_label_scores(selected_nodes, decoder_hidden)
             assert edge_label_scores.shape == (batch_size, self.edge_label_model.vocab_size)
 
-            scores["edge_labels_scores"] = F.log_softmax(edge_label_scores,1)
+            scores["edge_labels_scores"] = edge_label_scores #F.log_softmax(edge_label_scores,1) #log softmax happened earlier already.
 
             #####################
             if self.transition_system.predict_supertag_from_tos():
@@ -651,7 +651,7 @@ class TopDownDependencyParser(Model):
                 supertag_scores = self.supertagger.tag_scores(decoder_hidden_tagging, relevant_nodes_for_supertagging)
                 assert supertag_scores.shape == (batch_size, self.supertagger.vocab_size)
 
-                scores["constants_scores"] = F.log_softmax(supertag_scores,1)
+                scores["constants_scores"] = F.log_softmax(supertag_scores,1) # TODO: not necessary because maximum is not affected.
 
             if self.lex_label_tagger is not None:
                 lex_label_scores = self.lex_label_tagger.tag_scores(decoder_hidden_tagging, relevant_nodes_for_supertagging)
@@ -665,10 +665,11 @@ class TopDownDependencyParser(Model):
 
                 scores["term_types_scores"] = F.log_softmax(term_type_scores, 1)
 
+            scores = { name : tensor.cpu() for name, tensor in scores.items()}
             ### Update current node according to transition system:
             active_nodes = []
             for i, parsing_state in enumerate(parsing_states):
-                decision = self.transition_system.make_decision(index_tensor_dict(scores,i), self.edge_label_model, parsing_state)
+                decision = self.transition_system.make_decision(index_tensor_dict(scores,i), parsing_state)
                 parsing_states[i] = self.transition_system.step(parsing_state, decision, in_place = True)
                 active_nodes.append(parsing_states[i].active_node)
 
@@ -764,15 +765,11 @@ class TopDownDependencyParser(Model):
             # all_selected_nodes.append(selected_nodes)
 
             #####################
-            scores : Dict[str, torch.Tensor] = {"children_scores": edge_scores, "max_children" : selected_nodes.unsqueeze(1),
-                                                "inverted_input_mask" : inverted_input_mask}
-
-            # Compute edge label scores, perhaps they are useful to parsing procedure, perhaps it has to recompute.
-            #TODO set input every time, if we want to have it.
-            #edge_label_scores = self.edge_label_model.edge_label_scores(selected_nodes, decoder_hidden)
-            #assert edge_label_scores.shape == (k*batch_size, self.edge_label_model.vocab_size)
-
-            #scores["edge_labels_scores"] = F.log_softmax(edge_label_scores,1)
+            scores: Dict[str, torch.Tensor] = {"children_scores": edge_scores,
+                                                "max_children": selected_nodes.unsqueeze(1),
+                                                "inverted_input_mask": inverted_input_mask,
+                                                "all_labels_scores": self.edge_label_model.all_label_scores(
+                                                    decoder_hidden)}
 
             #####################
             if self.transition_system.predict_supertag_from_tos():
@@ -799,6 +796,8 @@ class TopDownDependencyParser(Model):
 
                 scores["term_types_scores"] = F.log_softmax(term_type_scores, 1)
 
+            scores = { name : tensor.cpu() for name, tensor in scores.items()}
+
             encoder_state["decoder_hidden"] = decoder_hidden
             decoder_states_full = self.decoder.get_full_states()
             ### Update current node according to transition system:
@@ -808,8 +807,7 @@ class TopDownDependencyParser(Model):
                 for i, parsing_state in enumerate(sentence):
                     parsing_state.decoder_state = decoder_states_full[k*sentence_id+i]
                     top_k : List[Decision] = self.transition_system.top_k_decision(index_tensor_dict(scores,k*sentence_id+i),
-                                                                                   index_tensor_dict(encoder_state,k*sentence_id+i),
-                                                                                   self.edge_label_model, parsing_state, k)
+                                                                                   parsing_state, k)
                     for decision in top_k:
                         all_decisions_for_sentence.append((decision, parsing_state))
 

@@ -20,7 +20,6 @@ from .ContextField import ContextField
 from .amconll_tools import parse_amconll, AMSentence
 from ..am_algebra.tools import is_welltyped
 from topdown_parser.transition_systems.transition_system import TransitionSystem
-from ..nn.EdgeLabelModel import OracleLabelModel, FuzzLabelModel
 from ..transition_systems.parsing_state import ParsingState
 
 from tqdm import tqdm
@@ -192,11 +191,9 @@ class AMConllDatasetReader(OrderedDatasetReader):
             stripped_sentence = am_sentence.strip_annotation()
 
             state : ParsingState = self.transition_system.initial_state(stripped_sentence, None)
-            oracel_edge_model = OracleLabelModel(self.lexicon)
             for decision in decisions[1:]:
                 scores = self.transition_system.decision_to_score(stripped_sentence, decision)
-                oracel_edge_model.set_gold_labels([decision.label])
-                decision_prime = self.transition_system.make_decision(scores, oracel_edge_model, state)
+                decision_prime = self.transition_system.make_decision(scores, state)
                 state = self.transition_system.step(state, decision_prime, in_place=True)
             assert state.is_complete()
             reconstructed = state.extract_tree()
@@ -209,10 +206,9 @@ class AMConllDatasetReader(OrderedDatasetReader):
             hash_value = len(am_sentence) + sum(self.lexicon.get_id("edge_labels", w.label) for w in am_sentence.words)
             torch.random.manual_seed(hash_value)
             state : ParsingState = self.transition_system.initial_state(stripped_sentence, None)
-            oracel_edge_model = OracleLabelModel(self.lexicon)
             for _ in range(2*len(stripped_sentence)+1):
-                scores = self.transition_system.fuzz_scores(stripped_sentence)
-                decision = self.transition_system.make_decision(scores, oracel_edge_model, state)
+                scores = self.transition_system.fuzz_scores(stripped_sentence, beam_search=False)
+                decision = self.transition_system.make_decision(scores, state)
                 state = self.transition_system.step(state, decision, in_place=True)
 
             assert state.is_complete()
@@ -225,12 +221,9 @@ class AMConllDatasetReader(OrderedDatasetReader):
             hash_value = len(am_sentence) + sum(self.lexicon.get_id("edge_labels", w.label) for w in am_sentence.words)
             torch.random.manual_seed(hash_value)
             state : ParsingState = self.transition_system.initial_state(stripped_sentence, None)
-            fuzz_edge_model = FuzzLabelModel(self.lexicon)
             for _ in range(2*len(stripped_sentence)+1):
-                scores = self.transition_system.fuzz_scores(stripped_sentence)
-                ones = torch.ones(len(am_sentence)+1)
-                encoder_state = {"encoded_input" : ones , "input_mask" : ones, "decoder_hidden" : ones} #dummy values
-                decision = self.transition_system.top_k_decision(scores, encoder_state, fuzz_edge_model, state, k=4)[0]
+                scores = self.transition_system.fuzz_scores(stripped_sentence, beam_search=True)
+                decision = self.transition_system.top_k_decision(scores, state, k=4)[0]
                 state = self.transition_system.step(state, decision, in_place=True)
 
             assert state.is_complete()

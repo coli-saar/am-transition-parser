@@ -73,12 +73,8 @@ class UnconstrainedTransitionSystem(TransitionSystem):
         children_scores = children_scores[:at_most_k] #shape (at_most_k)
         children = children[:at_most_k] #shape (at_most_k)
         # Now have k best children
-        encoded_input = encoder_state["encoded_input"].repeat((at_most_k, 1, 1)) #shape (at_most_k, seq_len, encoder dim)
-        input_mask = encoder_state["input_mask"].repeat((at_most_k, 1, 1)) #shape (at_most_k, seq_len, encoder_dim)
-        label_model.set_input(encoded_input,input_mask)
-        decoder_hidden = encoder_state["decoder_hidden"] #shape (decoder embedding)
-        decoder_hidden = decoder_hidden.repeat((at_most_k, 1)) #shape (at_most_k, decoder embedding)
-        label_scores = label_model.edge_label_scores(children, decoder_hidden) #shape (at_most_k, label vocab dim)
+
+        label_scores = scores["all_labels_scores"][children] # (at_most_k, label vocab size)
 
         label_scores, best_labels = torch.max(label_scores, dim=1)
 

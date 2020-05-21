@@ -67,11 +67,10 @@ class TransitionSystem(Registrable):
         """
         raise NotImplementedError()
 
-    def make_decision(self, scores: Dict[str, torch.Tensor], label_model: EdgeLabelModel, state : ParsingState) -> Decision:
+    def make_decision(self, scores: Dict[str, torch.Tensor], state : ParsingState) -> Decision:
         """
         Informs the transition system about the last node chosen
         Returns the index of the node that will get a child next according to the transitions system.
-        :param label_model: edge label model that we can query to get edge label scores.
         :param scores: additional choices for each batch element, like edge labels for example, contains edge existence scores.
         :return: a tensor of shape (batch_size,) of currently active nodes
             and a tensor of shape (batch_size, input_seq_len) which for every input position says if it is a valid next choice.
@@ -79,8 +78,7 @@ class TransitionSystem(Registrable):
         """
         raise NotImplementedError()
 
-    def top_k_decision(self, scores: Dict[str, torch.Tensor], encoder_state : Dict[str,torch.Tensor],
-                       label_model: EdgeLabelModel, state: ParsingState, k : int) -> List[Decision]:
+    def top_k_decision(self, scores: Dict[str, torch.Tensor], state: ParsingState, k : int) -> List[Decision]:
         raise NotImplementedError()
 
     def assumes_greedy_ok(self) -> Set[str]:
@@ -129,7 +127,7 @@ class TransitionSystem(Registrable):
                 "term_types_scores": term_type_scores, "lex_labels_scores" : lex_label_scores,
                 "edge_labels_scores" : edge_label_scores}
 
-    def fuzz_scores(self, sentence : AMSentence) -> Dict[str, torch.Tensor]:
+    def fuzz_scores(self, sentence: AMSentence, beam_search: bool) -> Dict[str, torch.Tensor]:
         children_scores = torch.rand(len(sentence)+1)
         constant_scores = torch.rand(self.additional_lexicon.vocab_size("constants"))
 
@@ -137,9 +135,13 @@ class TransitionSystem(Registrable):
 
         lex_label_scores = torch.rand(self.additional_lexicon.vocab_size("lex_labels"))
 
-        edge_label_scores = torch.rand(self.additional_lexicon.vocab_size("edge_labels"))
+        r = {"children_scores": children_scores, "constants_scores": constant_scores,
+                "term_types_scores": term_type_scores, "lex_labels_scores" : lex_label_scores}
 
-        return {"children_scores": children_scores, "constants_scores": constant_scores,
-                "term_types_scores": term_type_scores, "lex_labels_scores" : lex_label_scores,
-                "edge_labels_scores" : edge_label_scores}
+        if beam_search:
+            r["all_labels_scores"] = torch.rand((len(sentence)+1, self.additional_lexicon.vocab_size("edge_labels")))
+        else:
+            r["edge_labels_scores"] = torch.rand(self.additional_lexicon.vocab_size("edge_labels"))
+
+        return r
 

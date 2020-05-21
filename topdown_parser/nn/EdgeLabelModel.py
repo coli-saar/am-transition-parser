@@ -40,6 +40,14 @@ class EdgeLabelModel(Registrable, Module):
         """
         raise NotImplementedError()
 
+    def all_label_scores(self, decoder : torch.Tensor) -> torch.Tensor:
+        """
+
+        :param decoder:  shape (batch_size, decoder dim)
+        :return: tensor of shape (batch_size, input_seq_len, edge_label_vocab)
+        """
+        raise NotImplementedError()
+
 
 @EdgeLabelModel.register("simple")
 class SimpleEdgeLabelModel(EdgeLabelModel):
@@ -51,6 +59,7 @@ class SimpleEdgeLabelModel(EdgeLabelModel):
 
     def set_input(self, encoded_input : torch.Tensor, mask : torch.Tensor) -> None:
         self.encoded_input = encoded_input
+        self.input_seq_len = encoded_input.shape[1]
         self.mask = mask
         batch_size = encoded_input.shape[0]
         self.batch_size_range = get_range_vector(batch_size, get_device_id(encoded_input))
@@ -71,6 +80,18 @@ class SimpleEdgeLabelModel(EdgeLabelModel):
         assert logits.shape == (batch_size, self.vocab_size)
 
         return torch.log_softmax(logits, dim=1)
+
+    def all_label_scores(self, decoder: torch.Tensor) -> torch.Tensor:
+        batch_size, decoder_dim = decoder.shape
+
+        repeated = decoder.repeat((self.input_seq_len, 1, 1)).transpose(0,1)
+        assert repeated.shape == (batch_size, self.input_seq_len, decoder_dim)
+
+        concatenated = torch.cat([self.encoded_input, repeated], dim=2)
+        logits = self.output_layer(self.feedforward(concatenated))
+        assert logits.shape == (batch_size, self.input_seq_len, self.vocab_size)
+
+        return torch.log_softmax(logits, dim=2)
 
 
 @EdgeLabelModel.register("ma")
@@ -105,37 +126,3 @@ class MaEdgeModel(EdgeLabelModel):
         logits = self._bilinear(head_rep, vectors_in_question) + self._U2b(head_rep) + dependent_with_matrix
         return torch.log_softmax(logits, dim=1)
 
-
-
-
-class OracleLabelModel(EdgeLabelModel):
-
-    def __init__(self, lexicon: AdditionalLexicon):
-        super().__init__(lexicon)
-
-    def set_gold_labels(self, labels : List[str]) -> None:
-        self.scores = torch.zeros(len(labels), self.vocab_size)
-
-        for i, label in enumerate(labels):
-            self.scores[i, self.lexicon.get_id("edge_labels", label)] = 1
-
-    def set_input(self, encoded_input : torch.Tensor, mask : torch.Tensor) -> None:
-        self.batch_size = encoded_input.shape[0]
-
-    def edge_label_scores(self, encoder_indices : torch.Tensor, decoder : torch.Tensor) -> torch.Tensor:
-        assert self.batch_size == self.scores.shape[0]
-
-        return self.scores
-
-
-class FuzzLabelModel(EdgeLabelModel):
-
-    def __init__(self, lexicon: AdditionalLexicon):
-        super().__init__(lexicon)
-
-    def set_input(self, encoded_input : torch.Tensor, mask : torch.Tensor) -> None:
-        self.batch_size = encoded_input.shape[0]
-
-    def edge_label_scores(self, encoder_indices : torch.Tensor, decoder : torch.Tensor) -> torch.Tensor:
-
-        return torch.rand((self.batch_size, self.vocab_size), device=get_device_id(decoder))
