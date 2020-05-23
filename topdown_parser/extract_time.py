@@ -25,7 +25,7 @@ if __name__ == "__main__":
 
     time_dict : Dict[str, List[float]] = dict()
     with open(args.input) as f:
-        for am_sentence in parse_amconll(f):
+        for am_sentence in parse_amconll(f, validate=False):
             for k, v in am_sentence.attributes.items():
                 if "time" in k:
                     try:
