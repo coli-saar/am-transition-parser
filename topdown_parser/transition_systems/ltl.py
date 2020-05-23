@@ -14,7 +14,7 @@ from topdown_parser.nn.utils import get_device_id
 from topdown_parser.transition_systems.ltf import typ2supertag, typ2i, collect_sources
 from topdown_parser.transition_systems.parsing_state import CommonParsingState, ParsingState
 from topdown_parser.transition_systems.transition_system import TransitionSystem, Decision
-    #, get_parent, get_siblings
+#, get_parent, get_siblings
 from topdown_parser.transition_systems.utils import scores_to_selection, get_and_convert_to_numpy, get_best_constant, \
     single_score_to_selection, get_top_k_choices
 
@@ -169,9 +169,9 @@ class LTL(TransitionSystem):
         applysets_collected = [None for _ in range(len(sentence))]
 
         return LTLState(decoder_state, 0, 0.0, sentence,
-                 self.additional_lexicon, heads, children, labels,
-                 constants, lex_labels, stack, seen, substack,
-                 lexical_types, term_types, applysets_collected, len(sentence), False, [0 for _ in sentence])
+                        self.additional_lexicon, heads, children, labels,
+                        constants, lex_labels, stack, seen, substack,
+                        lexical_types, term_types, applysets_collected, len(sentence), False, [0 for _ in sentence])
 
     def step(self, state: LTLState, decision: Decision, in_place: bool = False) -> ParsingState:
         if in_place:
@@ -235,7 +235,7 @@ class LTL(TransitionSystem):
                     smallest_apply_set = np.inf
                     for term_typ in copy.term_types[tos-1]:
                         for lexical_type, apply_set in self.candidate_lex_types.get_candidates_with_apply_set(term_typ,
-                                copy.applysets_collected[tos-1], copy.words_left + len(state.applysets_collected[tos-1])):
+                                                                                                              copy.applysets_collected[tos-1], copy.words_left + len(state.applysets_collected[tos-1])):
 
                             rest_of_apply_set = apply_set - copy.applysets_collected[tos-1]
                             smallest_apply_set = min(smallest_apply_set, len(rest_of_apply_set))
@@ -298,6 +298,8 @@ class LTL(TransitionSystem):
             #we are done (or after first step), do nothing.
             return Decision(0, "", ("",""), "", score=0.0)
 
+        finish_score = -np.inf
+        finish_decision = None
         if (selected_node in state.seen and not self.pop_with_0) or (selected_node == 0 and self.pop_with_0):
             # pop node, select constant and lexical label.
             constant_scores = scores["constants_scores"].cpu().numpy()
@@ -313,9 +315,14 @@ class LTL(TransitionSystem):
                         best_constant = constant
             assert max_score > -np.inf
             pop_node = 0 if self.pop_with_0 else state.active_node
-            s, selected_lex_label = single_score_to_selection(scores, self.additional_lexicon, "lex_labels")
+            _, selected_lex_label = single_score_to_selection(scores, self.additional_lexicon, "lex_labels")
+            #score += s
+            finish_score = score + max_score
+            child_scores[pop_node] = -INF
+            score = 0.0
+            s, selected_node = torch.max(child_scores, dim=0)
             score += s
-            return Decision(pop_node, "", AMSentence.split_supertag(self.additional_lexicon.get_str_repr("constants", best_constant)), selected_lex_label, score=score)
+            finish_decision = Decision(pop_node, "", AMSentence.split_supertag(self.additional_lexicon.get_str_repr("constants", best_constant)), selected_lex_label, score=finish_score)
 
         # APP or MOD?
         label_scores = scores["edge_labels_scores"].cpu().numpy()
@@ -344,13 +351,16 @@ class LTL(TransitionSystem):
         if state.words_left - smallest_apply_set > 0:
             best_modify_edge_id, max_modify_score = get_best_constant(self.modify_ids, label_scores)
 
+        decision = np.argmax([finish_score, score + max_apply_score, score + max_modify_score])
         # Apply our choice
-        if max_modify_score > max_apply_score:
+        if decision == 2 and max_modify_score > -np.inf: #max_modify_score > max_apply_score:
             # MOD
             return Decision(int(selected_node), self.additional_lexicon.get_str_repr("edge_labels",  best_modify_edge_id), ("",""),"", score=score+max_modify_score)
-        elif max_apply_score > -np.inf:
+        elif decision == 1 and max_apply_score > -np.inf:
             # APP
             return Decision(int(selected_node), "APP_"+best_apply_source, ("",""),"", score=score+max_apply_score)
+        elif decision == 0 and finish_score > -np.inf:
+            return finish_decision
         else:
             raise ValueError("Could not select action. Bug.")
 
