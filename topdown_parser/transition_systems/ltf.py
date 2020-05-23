@@ -388,6 +388,7 @@ class LTF(TransitionSystem):
             req = lexical_type_of_tos.get_request(todo_source)
             source_score = label_scores[self.additional_lexicon.get_id("edge_labels", "APP_"+todo_source)]
             if not is_empty(self.candidate_lex_types.get_candidates(req, words_left_after_this - (sources_to_be_filled-1))):
+                # TODO, the above should always be true and can be removed.
                 if source_score >= max_apply_score:
                     best_apply_source = todo_source
                     max_apply_score = source_score

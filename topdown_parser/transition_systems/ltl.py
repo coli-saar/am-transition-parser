@@ -330,12 +330,13 @@ class LTL(TransitionSystem):
             for lexical_type, apply_set in self.candidate_lex_types.get_candidates_with_apply_set(term_typ, apply_of_tos, state.words_left + len(apply_of_tos)):
                 rest_of_apply_set = apply_set - apply_of_tos
 
-                for source in rest_of_apply_set:
-                    source_score = label_scores[self.additional_lexicon.get_id("edge_labels", "APP_"+source)]
-                    if source_score > max_apply_score and len(rest_of_apply_set) <= state.words_left:
-                        max_apply_score = source_score
-                        best_apply_source = source
-                        #best_lex_type = lexical_type
+                if len(rest_of_apply_set) <= state.words_left:
+                    for source in rest_of_apply_set:
+                        source_score = label_scores[self.additional_lexicon.get_id("edge_labels", "APP_"+source)]
+                        if source_score > max_apply_score:
+                            max_apply_score = source_score
+                            best_apply_source = source
+                            #best_lex_type = lexical_type
 
         # Check MODIFY
         max_modify_score = -np.inf
@@ -432,10 +433,9 @@ class LTL(TransitionSystem):
                 for lexical_type, apply_set in self.candidate_lex_types.get_candidates_with_apply_set(term_typ, apply_of_tos, state.words_left + len(apply_of_tos)):
                     rest_of_apply_set = apply_set - apply_of_tos
 
-                    for source in rest_of_apply_set:
-                        source_score = label_scores[self.additional_lexicon.get_id("edge_labels", "APP_"+source)]
-
-                        if len(rest_of_apply_set) <= state.words_left:
+                    if len(rest_of_apply_set) <= state.words_left:
+                        for source in rest_of_apply_set:
+                            source_score = label_scores[self.additional_lexicon.get_id("edge_labels", "APP_"+source)]
                             possible_sources.add(source)
                             source_to_score[source] = source_score
 
