@@ -22,6 +22,9 @@ import heapq
 
 import numpy as np
 
+def copy_optional_set(l : List[Optional[Set[Any]]]):
+    return [ None if x is None else set(x) for x in l]
+
 class LTLState(CommonParsingState):
 
     def __init__(self, decoder_state: Any, active_node: int, score: float, sentence: AMSentence,
@@ -45,7 +48,7 @@ class LTLState(CommonParsingState):
         copy = LTLState(self.decoder_state, self.active_node, self.score, self.sentence,
                         self.lexicon, list(self.heads), deepcopy(self.children), list(self.edge_labels),
                         list(self.constants), list(self.lex_labels), list(self.stack), set(self.seen), list(self.substack),
-                        list(self.lexical_types), deepcopy(self.term_types), deepcopy(self.applysets_collected), self.words_left, self.root_determined,
+                        list(self.lexical_types), copy_optional_set(self.term_types), copy_optional_set(self.applysets_collected), self.words_left, self.root_determined,
                         list(self.sources_still_to_fill))
         copy.step = self.step
         return copy
@@ -301,19 +304,18 @@ class LTL(TransitionSystem):
         if (selected_node in state.seen and not self.pop_with_0) or (selected_node == 0 and self.pop_with_0):
             # pop node, select constant and lexical label.
             constant_scores = scores["constants_scores"].cpu().numpy()
-            max_score = -np.inf
-            best_constant = None
+            #max_score = -np.inf
+            #best_constant = None
+            possible_constants = set()
             for term_typ in state.term_types[state.active_node-1]:
                 possible_lex_types = self.apply_cache.by_apply_set(term_typ, frozenset(state.applysets_collected[state.active_node-1]))
-                if possible_lex_types:
-                    possible_constants = {constant for lex_type in possible_lex_types for constant in self.typ2supertag[lex_type]}
-                    constant, local_score = get_best_constant(possible_constants, constant_scores)
-                    if local_score > max_score:
-                        max_score = local_score
-                        best_constant = constant
-            assert max_score > -np.inf
+                for lex_type in possible_lex_types:
+                    possible_constants.update(self.typ2supertag[lex_type])
+
+            assert len(possible_constants) > 0
+            best_constant, max_score = get_best_constant(possible_constants, constant_scores)
             pop_node = 0 if self.pop_with_0 else state.active_node
-            s, selected_lex_label = single_score_to_selection(scores, self.additional_lexicon, "lex_labels")
+            selected_lex_label = self.additional_lexicon.get_str_repr("lex_labels", int(scores["lex_labels"].cpu().numpy()))
             score += s
             return Decision(pop_node, "", AMSentence.split_supertag(self.additional_lexicon.get_str_repr("constants", best_constant)), selected_lex_label, score=score)
 
@@ -321,22 +323,23 @@ class LTL(TransitionSystem):
         label_scores = scores["edge_labels_scores"].cpu().numpy()
 
         max_apply_score = -np.inf
-        best_apply_source = None
+        #best_apply_source = None
         #best_lex_type = None # for debugging purposes
         smallest_apply_set = state.sources_still_to_fill[state.active_node - 1]
 
         apply_of_tos = state.applysets_collected[state.active_node-1]
+        possible_sources = set()
         for term_typ in state.term_types[state.active_node-1]:
             for lexical_type, apply_set in self.candidate_lex_types.get_candidates_with_apply_set(term_typ, apply_of_tos, state.words_left + len(apply_of_tos)):
                 rest_of_apply_set = apply_set - apply_of_tos
 
                 if len(rest_of_apply_set) <= state.words_left:
-                    for source in rest_of_apply_set:
-                        source_score = label_scores[self.additional_lexicon.get_id("edge_labels", "APP_"+source)]
-                        if source_score > max_apply_score:
-                            max_apply_score = source_score
-                            best_apply_source = source
-                            #best_lex_type = lexical_type
+                    possible_sources.update(rest_of_apply_set)
+
+        best_apply_edge_id = None
+        if len(possible_sources) > 0:
+            edge_ids = {self.additional_lexicon.get_id("edge_labels", "APP_"+source) for source in possible_sources}
+            best_apply_edge_id, max_apply_score = get_best_constant(edge_ids, label_scores)
 
         # Check MODIFY
         max_modify_score = -np.inf
@@ -350,7 +353,7 @@ class LTL(TransitionSystem):
             return Decision(int(selected_node), self.additional_lexicon.get_str_repr("edge_labels",  best_modify_edge_id), ("",""),"", score=score+max_modify_score)
         elif max_apply_score > -np.inf:
             # APP
-            return Decision(int(selected_node), "APP_"+best_apply_source, ("",""),"", score=score+max_apply_score)
+            return Decision(int(selected_node), self.additional_lexicon.get_str_repr("edge_labels",  best_apply_edge_id), ("",""),"", score=score+max_apply_score)
         else:
             raise ValueError("Could not select action. Bug.")
 
@@ -394,7 +397,8 @@ class LTL(TransitionSystem):
         children_scores = children_scores.cpu().numpy()
         label_scores = label_scores.cpu().numpy()
         constant_scores = scores["constants_scores"].cpu().numpy()
-        lex_label_score, selected_lex_label = single_score_to_selection(scores, self.additional_lexicon, "lex_labels")
+        #lex_label_score, selected_lex_label = single_score_to_selection(scores, self.additional_lexicon, "lex_labels")
+        selected_lex_label = self.additional_lexicon.get_str_repr("lex_labels", int(scores["lex_labels"].cpu().numpy()))
 
         decisions = []
         for selected_node, node_score, label_scores in zip(children, children_scores, label_scores):
@@ -413,13 +417,23 @@ class LTL(TransitionSystem):
             if (selected_node in state.seen and not self.pop_with_0) or (selected_node == 0 and self.pop_with_0):
                 # pop node, select constant and lexical label.
                 pop_node = 0 if self.pop_with_0 else state.active_node
+                possible_lex_types = set()
                 for term_typ in state.term_types[state.active_node-1]:
-                    possible_lex_types = self.apply_cache.by_apply_set(term_typ, frozenset(state.applysets_collected[state.active_node-1]))
-                    if possible_lex_types:
-                        possible_constants = {constant for lex_type in possible_lex_types for constant in self.typ2supertag[lex_type]}
-                        constant, constant_score = get_best_constant(possible_constants, constant_scores)
-                        decisions.append(Decision(pop_node, "", AMSentence.split_supertag(self.additional_lexicon.get_str_repr("constants", constant)),
-                                                  selected_lex_label, score=constant_score + node_score))
+                    possible_lex_types.update(self.apply_cache.by_apply_set(term_typ, frozenset(state.applysets_collected[state.active_node-1])))
+
+                assert len(possible_lex_types) > 0
+                for lex_type in possible_lex_types:
+                    constant, constant_score = get_best_constant(self.typ2supertag[lex_type], constant_scores)
+                    decisions.append(Decision(pop_node, "", AMSentence.split_supertag(self.additional_lexicon.get_str_repr("constants", constant)),
+                                                   selected_lex_label, score=constant_score + node_score))
+
+                # for term_typ in state.term_types[state.active_node-1]:
+                #     possible_lex_types = self.apply_cache.by_apply_set(term_typ, frozenset(state.applysets_collected[state.active_node-1]))
+                #     if possible_lex_types:
+                #         possible_constants = {constant for lex_type in possible_lex_types for constant in self.typ2supertag[lex_type]}
+                #         constant, constant_score = get_best_constant(possible_constants, constant_scores)
+                #         decisions.append(Decision(pop_node, "", AMSentence.split_supertag(self.additional_lexicon.get_str_repr("constants", constant)),
+                #                                   selected_lex_label, score=constant_score + node_score))
                 continue
 
             smallest_apply_set = state.sources_still_to_fill[state.active_node - 1]
@@ -428,19 +442,16 @@ class LTL(TransitionSystem):
 
             # APP
             possible_sources = set()
-            source_to_score = dict()
             for term_typ in state.term_types[state.active_node-1]:
                 for lexical_type, apply_set in self.candidate_lex_types.get_candidates_with_apply_set(term_typ, apply_of_tos, state.words_left + len(apply_of_tos)):
                     rest_of_apply_set = apply_set - apply_of_tos
 
                     if len(rest_of_apply_set) <= state.words_left:
-                        for source in rest_of_apply_set:
-                            source_score = label_scores[self.additional_lexicon.get_id("edge_labels", "APP_"+source)]
-                            possible_sources.add(source)
-                            source_to_score[source] = source_score
+                        possible_sources.update(rest_of_apply_set)
 
-            for source in sorted(possible_sources, key=lambda source: source_to_score[source], reverse=True)[:k]:
-                decisions.append(Decision(int(selected_node), "APP_"+source, ("", ""), "", score=node_score + source_to_score[source]))
+            apply_ids = {self.additional_lexicon.get_id("edge_labels", "APP_"+source) for source in possible_sources}
+            for edge_id, apply_score in get_top_k_choices(apply_ids, label_scores, k):
+                decisions.append(Decision(int(selected_node), self.additional_lexicon.get_str_repr("edge_labels", edge_id), ("",""), "", score = node_score+apply_score))
 
             # MOD
             if state.words_left - smallest_apply_set > 0:

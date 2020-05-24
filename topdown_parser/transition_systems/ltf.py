@@ -329,8 +329,7 @@ class LTF(TransitionSystem):
         # Greedily choose best constant, if needed at this point.
         if state.constants[state.active_node-1] == ("_","_"):
             # active node needs to get a lexical type, choose one.
-            s, selected_lex_label = single_score_to_selection(scores, self.additional_lexicon, "lex_labels")
-            score += s
+            selected_lex_label = self.additional_lexicon.get_str_repr("lex_labels", int(scores["lex_labels"].cpu().numpy()))
 
             possible_term_types = state.term_types[state.active_node-1]
             max_constant_score = -np.inf
@@ -481,7 +480,7 @@ class LTF(TransitionSystem):
         children_scores = children_scores.cpu().numpy()
         label_scores = label_scores.cpu().numpy()
 
-        _, selected_lex_label = single_score_to_selection(scores, self.additional_lexicon, "lex_labels")
+        selected_lex_label = self.additional_lexicon.get_str_repr("lex_labels", int(scores["lex_labels"].cpu().numpy()))
 
         decisions = []
 

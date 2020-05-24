@@ -631,8 +631,9 @@ class TopDownDependencyParser(Model):
             # all_selected_nodes.append(selected_nodes)
 
             #####################
-            scores : Dict[str, torch.Tensor] = {"children_scores": edge_scores, "max_children" : selected_nodes.unsqueeze(1),
-                                                "inverted_input_mask" : inverted_input_mask}
+            scores : Dict[str, torch.Tensor] = {"children_scores": edge_scores }
+                                                #, "max_children" : selected_nodes.unsqueeze(1),
+                                                #"inverted_input_mask" : inverted_input_mask}
 
             # Compute edge label scores, perhaps they are useful to parsing procedure, perhaps it has to recompute.
             edge_label_scores = self.edge_label_model.edge_label_scores(selected_nodes, decoder_hidden)
@@ -657,7 +658,8 @@ class TopDownDependencyParser(Model):
                 lex_label_scores = self.lex_label_tagger.tag_scores(decoder_hidden_tagging, relevant_nodes_for_supertagging)
                 assert lex_label_scores.shape == (batch_size, self.lex_label_tagger.vocab_size)
 
-                scores["lex_labels_scores"] = F.log_softmax(lex_label_scores,1)
+                #scores["lex_labels_scores"] = F.log_softmax(lex_label_scores,1)
+                scores["lex_labels"] = torch.argmax(lex_label_scores, 1).cpu()
 
             if self.term_type_tagger is not None:
                 term_type_scores = self.term_type_tagger.tag_scores(decoder_hidden_tagging, relevant_nodes_for_supertagging)
@@ -766,8 +768,8 @@ class TopDownDependencyParser(Model):
 
             #####################
             scores: Dict[str, torch.Tensor] = {"children_scores": edge_scores,
-                                                "max_children": selected_nodes.unsqueeze(1),
-                                                "inverted_input_mask": inverted_input_mask,
+                                                #"max_children": selected_nodes.unsqueeze(1),
+                                                #"inverted_input_mask": inverted_input_mask,
                                                 "all_labels_scores": self.edge_label_model.all_label_scores(
                                                     decoder_hidden)}
 
@@ -782,21 +784,22 @@ class TopDownDependencyParser(Model):
                 supertag_scores = self.supertagger.tag_scores(decoder_hidden_tagging, relevant_nodes_for_supertagging)
                 assert supertag_scores.shape == (k*batch_size, self.supertagger.vocab_size)
 
-                scores["constants_scores"] = F.log_softmax(supertag_scores,1)
+                scores["constants_scores"] = F.log_softmax(supertag_scores,1).cpu()
 
             if self.lex_label_tagger is not None:
                 lex_label_scores = self.lex_label_tagger.tag_scores(decoder_hidden_tagging, relevant_nodes_for_supertagging)
                 assert lex_label_scores.shape == (k*batch_size, self.lex_label_tagger.vocab_size)
 
-                scores["lex_labels_scores"] = F.log_softmax(lex_label_scores,1)
+                #scores["lex_labels_scores"] = F.log_softmax(lex_label_scores,1).cpu()
+                scores["lex_labels"] = torch.argmax(lex_label_scores, 1).cpu()
 
             if self.term_type_tagger is not None:
                 term_type_scores = self.term_type_tagger.tag_scores(decoder_hidden_tagging, relevant_nodes_for_supertagging)
                 assert term_type_scores.shape == (k*batch_size, self.term_type_tagger.vocab_size)
 
-                scores["term_types_scores"] = F.log_softmax(term_type_scores, 1)
+                scores["term_types_scores"] = F.log_softmax(term_type_scores, 1).cpu()
 
-            scores = { name : tensor.cpu() for name, tensor in scores.items()}
+            #scores = { name : tensor.cpu() for name, tensor in scores.items()}
 
             encoder_state["decoder_hidden"] = decoder_hidden
             decoder_states_full = self.decoder.get_full_states()
