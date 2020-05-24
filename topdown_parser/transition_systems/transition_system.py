@@ -125,6 +125,7 @@ class TransitionSystem(Registrable):
 
         return {"children_scores": children_scores, "constants_scores": constant_scores,
                 "term_types_scores": term_type_scores, "lex_labels_scores" : lex_label_scores,
+                "lex_labels" : torch.randint(0, self.additional_lexicon.vocab_size("lex_labels"), (1,)),
                 "edge_labels_scores" : edge_label_scores}
 
     def fuzz_scores(self, sentence: AMSentence, beam_search: bool) -> Dict[str, torch.Tensor]:
@@ -136,6 +137,7 @@ class TransitionSystem(Registrable):
         lex_label_scores = torch.rand(self.additional_lexicon.vocab_size("lex_labels"))
 
         r = {"children_scores": children_scores, "constants_scores": constant_scores,
+             "lex_labels" : torch.randint(0, self.additional_lexicon.vocab_size("lex_labels"), (1,)),
                 "term_types_scores": term_type_scores, "lex_labels_scores" : lex_label_scores}
 
         if beam_search:

@@ -16,14 +16,12 @@ from topdown_parser.transition_systems.parsing_state import CommonParsingState, 
 from topdown_parser.transition_systems.transition_system import TransitionSystem, Decision
     #, get_parent, get_siblings
 from topdown_parser.transition_systems.utils import scores_to_selection, get_and_convert_to_numpy, get_best_constant, \
-    single_score_to_selection, get_top_k_choices
+    single_score_to_selection, get_top_k_choices, copy_optional_set
 
 import heapq
 
 import numpy as np
 
-def copy_optional_set(l : List[Optional[Set[Any]]]):
-    return [ None if x is None else set(x) for x in l]
 
 class LTLState(CommonParsingState):
 

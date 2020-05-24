@@ -20,7 +20,7 @@ from topdown_parser.transition_systems.parsing_state import CommonParsingState, 
 from topdown_parser.transition_systems.transition_system import TransitionSystem, Decision
 #from topdown_parser.transition_systems.parsing_state import get_parent, get_siblings
 from topdown_parser.transition_systems.utils import scores_to_selection, get_best_constant, single_score_to_selection, \
-    is_empty, get_top_k_choices
+    is_empty, get_top_k_choices, copy_optional_set
 
 import numpy as np
 
@@ -72,9 +72,9 @@ class LTFState(CommonParsingState):
 
     def copy(self) -> "ParsingState":
         return LTFState(self.decoder_state, self.active_node, self.score, self.sentence,
-                        self.lexicon, list(self.heads), deepcopy(self.children), list(self.edge_labels),
+                        self.lexicon, list(self.heads), {node: list(children) for node, children in self.children.items()}, list(self.edge_labels),
                         list(self.constants), list(self.lex_labels), list(self.stack), set(self.seen),
-                        list(self.lexical_types), [set(s) for s in self.term_types], deepcopy(self.applysets_todo), self.words_left, self.root_determined)
+                        list(self.lexical_types), [set(s) for s in self.term_types], copy_optional_set(self.applysets_todo), self.words_left, self.root_determined)
 
     def sources_to_be_filled(self) -> int:
         return sum(len(a) if a is not None else 0 for a in self.applysets_todo)
@@ -384,13 +384,11 @@ class LTF(TransitionSystem):
         best_apply_source = None
 
         for todo_source in applyset_todo_tos:
-            req = lexical_type_of_tos.get_request(todo_source)
             source_score = label_scores[self.additional_lexicon.get_id("edge_labels", "APP_"+todo_source)]
-            if not is_empty(self.candidate_lex_types.get_candidates(req, words_left_after_this - (sources_to_be_filled-1))):
-                # TODO, the above should always be true and can be removed.
-                if source_score >= max_apply_score:
-                    best_apply_source = todo_source
-                    max_apply_score = source_score
+            # TODO what if APP_todo_source is not a valid edge label? right now we get the UNK score.
+            if source_score >= max_apply_score:
+                best_apply_source = todo_source
+                max_apply_score = source_score
 
         # What if we want to modify? Find best mod operation.
         max_mod_score = -np.inf
@@ -438,7 +436,6 @@ class LTF(TransitionSystem):
         if state.root_determined and state.active_node == 0:
             return [Decision(0, "", ("",""), "", termtyp=None, score=0.0)]
 
-        device = get_device_id(scores["constants_scores"])
 
         # Find best constants, if we have to choose them:
         head_types = self.top_k_lexical_types(scores["constants_scores"].cpu().numpy(), scores["term_types_scores"].cpu().numpy(), state, k)
@@ -465,6 +462,8 @@ class LTF(TransitionSystem):
         children_scores, children = torch.sort(child_scores, descending=True)
         children_scores = children_scores[:at_most_k] #shape (at_most_k)
         children = children[:at_most_k] #shape (at_most_k)
+
+        device = get_device_id(children)
 
         #Add pop node, we might have to do this, depending on the lexical type
         if pop_node not in children:
@@ -520,21 +519,18 @@ class LTF(TransitionSystem):
 
                 words_left_after_this = state.words_left - 1
 
-                possible_sources = set()
+                # possible_sources = set()
                 source_to_score = dict()
 
                 for todo_source in applyset_todo_tos:
-                    req = lexical_type_of_tos.get_request(todo_source)
                     source_score = label_scores_this_node[self.additional_lexicon.get_id("edge_labels", "APP_"+todo_source)]
-                    if not is_empty(self.candidate_lex_types.get_candidates(req, words_left_after_this - (sources_to_be_filled-1))):
-                        possible_sources.add(todo_source)
-                        source_to_score[todo_source] = source_score
+                    source_to_score[todo_source] = source_score
 
                 top_k_mod_choices = get_top_k_choices(self.modify_ids, label_scores_this_node, k)
 
                 if determine_head_type:
                     head_constant = AMSentence.split_supertag(self.additional_lexicon.get_str_repr("constants", best_local_constant))
-                    for source in sorted(possible_sources, key=lambda source: source_to_score[source], reverse=True)[:k]:
+                    for source in sorted(applyset_todo_tos, key=lambda source: source_to_score[source], reverse=True)[:k]:
                         decisions.append(Decision(int(selected_node), "APP_"+source, head_constant, selected_lex_label, term_type_of_tos,
                                                   score=node_score + local_decision_score + source_to_score[source]))
 
@@ -544,7 +540,7 @@ class LTF(TransitionSystem):
                                                       score=node_score + local_decision_score + modify_score))
 
                 else:
-                    for source in sorted(possible_sources, key=lambda source: source_to_score[source], reverse=True)[:k]:
+                    for source in sorted(applyset_todo_tos, key=lambda source: source_to_score[source], reverse=True)[:k]:
                         decisions.append(Decision(int(selected_node), "APP_"+source, ("",""), "_", None,
                                                   score=node_score + source_to_score[source]))
 

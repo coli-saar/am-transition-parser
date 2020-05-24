@@ -55,3 +55,6 @@ def is_empty(a : Iterable[Any]) -> bool:
         return False
     except StopIteration:
         return True
+
+def copy_optional_set(l : List[Optional[Set[Any]]]):
+    return [ None if x is None else set(x) for x in l]
