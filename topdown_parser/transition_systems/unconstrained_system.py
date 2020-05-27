@@ -42,7 +42,7 @@ class UnconstrainedTransitionSystem(TransitionSystem):
         s, selected_label = single_score_to_selection(scores, self.additional_lexicon, "edge_labels")
         score += s
 
-        if "constants" in scores:
+        if "constants_scores" in scores:
             s, selected_supertag = single_score_to_selection(scores, self.additional_lexicon, "constants")
             score += s
         else:
