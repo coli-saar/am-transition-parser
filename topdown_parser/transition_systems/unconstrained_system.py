@@ -23,7 +23,7 @@ class UnconstrainedTransitionSystem(TransitionSystem):
     def predict_supertag_from_tos(self) -> bool:
         return True
 
-    def make_decision(self, scores: Dict[str, torch.Tensor], label_model: EdgeLabelModel, state : CommonParsingState) -> Decision:
+    def make_decision(self, scores: Dict[str, torch.Tensor], state : CommonParsingState) -> Decision:
         # Select node:
         child_scores = scores["children_scores"].detach().cpu() # shape (input_seq_len)
         #Cannot select nodes that we have visited already.
@@ -48,13 +48,11 @@ class UnconstrainedTransitionSystem(TransitionSystem):
         else:
             selected_supertag = AMSentence.get_bottom_supertag()
 
-        s, selected_lex_label = single_score_to_selection(scores, self.additional_lexicon, "lex_labels")
-        score += s
+        selected_lex_label = self.additional_lexicon.get_str_repr("lex_labels", int(scores["lex_labels"].cpu().numpy()))
 
         return Decision(int(selected_node), selected_label, AMSentence.split_supertag(selected_supertag), selected_lex_label, score=score)
 
-    def top_k_decision(self, scores: Dict[str, torch.Tensor], encoder_state : Dict[str,torch.Tensor],
-                       label_model: EdgeLabelModel, state : CommonParsingState, k : int) -> List[Decision]:
+    def top_k_decision(self, scores: Dict[str, torch.Tensor], state : CommonParsingState, k : int) -> List[Decision]:
         # Select node:
         child_scores = scores["children_scores"] # shape (input_seq_len)
         #Cannot select nodes that we have visited already (except if not pop with 0 and currently active, then we can close).
@@ -79,16 +77,16 @@ class UnconstrainedTransitionSystem(TransitionSystem):
         label_scores, best_labels = torch.max(label_scores, dim=1)
 
         children = children.cpu()
-        children_scores = children_scores.cpu()
-        label_scores = label_scores.cpu()
+        children_scores = children_scores.cpu().numpy()
+        label_scores = label_scores.cpu().numpy()
         best_labels = best_labels.cpu().numpy()
 
         #Constants, lex label:
         score_constant, selected_supertag = single_score_to_selection(scores, self.additional_lexicon, "constants")
-        score_lex_label, selected_lex_label = single_score_to_selection(scores, self.additional_lexicon, "lex_labels")
+        selected_lex_label = self.additional_lexicon.get_str_repr("lex_labels", int(scores["lex_labels"].cpu().numpy()))
 
         return [Decision(int(children[i]),self.additional_lexicon.get_str_repr("edge_labels",best_labels[i]),
-                         AMSentence.split_supertag(selected_supertag), selected_lex_label,score=score_lex_label + score_constant + label_scores[i] + children_scores[i])
+                         AMSentence.split_supertag(selected_supertag), selected_lex_label,score= score_constant + label_scores[i] + children_scores[i])
                 for i in range(at_most_k)]
 
     def assumes_greedy_ok(self) -> Set[str]:
