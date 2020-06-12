@@ -3,36 +3,146 @@ from dataclasses import dataclass
 from typing import Tuple, Dict, Any, List, Set, Optional
 
 import torch
+from allennlp.nn.util import get_mask_from_sequence_lengths
 
 from topdown_parser.dataset_readers.amconll_tools import AMSentence
 from topdown_parser.dataset_readers.AdditionalLexicon import AdditionalLexicon
+import torch.nn.functional as F
 
 import numpy as np
 
-@dataclass
-class ParsingState:
+from topdown_parser.nn.utils import get_device_id
 
-    decoder_state : Any
-    active_node : int
-    score : float
-    lexicon : AdditionalLexicon
+
+class BatchedStack:
+    def __init__(self, batch_size : int, max_capacity: int, device = None, stacktype : Optional[torch.dtype] = torch.long):
+        self.stack = torch.zeros(batch_size, max_capacity, dtype=stacktype, device=device)
+        self.stack_ptr = torch.zeros(batch_size, dtype=torch.long, device=device)
+        self.batch_range = torch.arange(batch_size, dtype=torch.long, device=device)
+
+    def depth(self) -> torch.Tensor:
+        return self.stack_ptr.clone()
+
+    def push(self, vector, mask):
+        mask = mask.long()
+        self.stack_ptr += mask
+        self.stack[self.batch_range, self.stack_ptr] = (1-mask)*self.stack[self.batch_range, self.stack_ptr] + mask * vector
+
+    def peek(self):
+        return self.stack[self.batch_range, self.stack_ptr]
+
+    def pop_wo_peek(self, mask : torch.Tensor):
+        self.stack_ptr -= mask.long()
+        if torch.any(self.stack_ptr < 0):
+            raise ValueError("Stack empty")
+
+    def is_empty(self) -> torch.Tensor:
+        return self.stack_ptr == 0
+
+    def pop(self, mask):
+        r = self.peek()
+        self.pop_wo_peek(mask)
+        return r
+
+class BatchedListofList:
+    """
+    A list of lists for each batch element. Basically a tensor of shape (batch_size, outer_size, inner_size)
+    """
+    def __init__(self, batch_size : int, outer_size: int, inner_size : int, device = None, stacktype : Optional[torch.dtype] = torch.long):
+        self.lol = torch.zeros(batch_size, outer_size, inner_size, dtype=stacktype, device=device)
+        self.ptr = torch.zeros(batch_size, outer_size, dtype=torch.long, device=device)
+        self.batch_range = torch.arange(batch_size, dtype=torch.long, device=device)
+
+    def outer_index(self, indices):
+        return self.lol[self.batch_range, indices]
+
+    def append(self, outer_indices, vector, mask):
+        """
+
+        :param outer_indices: shape (outer_size,)
+        :param vector: shape (batch_size,)
+        :param mask:
+        :return:
+        """
+        mask = mask.long()
+        self.lol[self.batch_range, outer_indices, self.ptr[self.batch_range, outer_indices]] = (1-mask)*self.lol[self.batch_range, outer_indices, self.ptr[self.batch_range, outer_indices]]\
+                                                                                               + mask * vector
+        self.ptr[self.batch_range, outer_indices] += mask
+
+
+
+@dataclass
+class BatchedParsingState:
+
+    decoder_state: Any
+    sentences: List[AMSentence]
+    stack: BatchedStack
+    children: BatchedListofList #shape (batch_size, input_seq_len, input_seq_len)
+    heads: torch.Tensor #shape (batch_size, input_seq_len) with 1-based id of parents, TO BE INITIALIZED WITH -1
+    edge_labels: torch.Tensor #shape (batch_size, input_seq_len) with the id of the incoming edge for each token
+    constants: torch.Tensor #shape (batch_size, input_seq_len), TO BE INITIALIZED WITH -1
+    term_types: torch.Tensor #shape (batch_size, input_seq_len)
+    lex_labels: torch.Tensor #shape (batch_size, input_seq_len)
+    lexicon: AdditionalLexicon
+
+    def parent_mask(self) -> torch.Tensor:
+        """
+        1 iff node still need head.
+        :return: shape (batch_size, input_seq_len)
+        """
+        return self.heads < 0
+
+    def position_mask(self) -> torch.Tensor:
+        """
+        Which elements are actual words in the sentence?
+        :return: shape (batch_size, input_seq_len)
+        """
+        if not hasattr(self, "lengths"):
+            self.lengths = torch.tensor([len(s)+1 for s in self.sentences], device=get_device_id(self.constants))
+            self.max_len = max(len(s) for s in self.sentences)+1
+
+        return get_mask_from_sequence_lengths(self.lengths, self.max_len)
+
+    def constant_mask(self) -> torch.Tensor:
+        """
+        1 iff node doesn't have constant chosen yet.
+        :return:
+        """
+        return self.constants < 0
 
     def is_complete(self) -> bool:
+        """
+        All sentences in the batch done?
+        :return:
+        """
         raise NotImplementedError()
 
-    def extract_tree(self) -> AMSentence:
-        raise NotImplementedError()
+    def extract_trees(self) -> List[AMSentence]:
+        r = []
+        for i in range(len(self.sentences)):
+            length = len(self.sentences[i])
+            sentence = self.sentences[i].set_heads([max(0, h) for i, h in enumerate(self.heads[i,1:].cpu().numpy()) if i < length]) #negative heads are ignored, so point to 0.
+            edge_labels = [self.lexicon.get_str_repr("edge_labels", id) if id > 0 else "IGNORE" for i, id in enumerate(self.edge_labels[i,1:].cpu().numpy()) if i < length]
+            sentence = sentence.set_labels(edge_labels)
+            constants = [AMSentence.split_supertag(self.lexicon.get_str_repr("constants", id)) if id > 0 else AMSentence.split_supertag(AMSentence.get_bottom_supertag())
+                         for i, id in enumerate(self.constants[i,1:].cpu().numpy()) if i < length]
+            sentence = sentence.set_supertag_tuples(constants)
+            lex_labels = [self.lexicon.get_str_repr("lex_labels", id) if id > 0 else "_" for i, id in enumerate(self.lex_labels[i,1:].cpu().numpy()) if i < length]
+            sentence = sentence.set_lexlabels(lex_labels)
+            r.append(sentence)
+        return r
 
-    def gather_context(self, device : int) -> Dict[str, torch.Tensor]:
+    def gather_context(self) -> Dict[str, torch.Tensor]:
         """
         Extracts features of the current context like siblings, grandparents etc.
-        :param device: id of device which to put on the tensors.
         :return: a dictionary which can be used for storing
         various kinds of information, we can condition on.
         """
-        raise NotImplementedError()
+        active_nodes = self.stack.peek() #shape (batch_size,)
+        return {"parents": F.relu(self.heads[self.stack.batch_range, active_nodes]), "children": self.children.outer_index(active_nodes),
+                "children_mask" : self.children.outer_index(active_nodes) == 0}
 
-    def copy(self) -> "ParsingState":
+    def copy(self) -> "BatchedParsingState":
         """
         A way of copying this parsing state such that modifying objects that constrain the future
         will be modifying copied objects. e.g. we need a deep copy of the stack and nodes seen already
@@ -42,77 +152,78 @@ class ParsingState:
         raise NotImplementedError()
 
 
-class CommonParsingState(ParsingState, ABC):
-
-    def __init__(self,decoder_state: Any, active_node: int, score: float,
-                 sentence : AMSentence, lexicon : AdditionalLexicon,
-                 heads: List[int], children: Dict[int, List[int]],
-                 edge_labels : List[str], constants: List[Tuple[str,str]], lex_labels: List[str],
-                 stack: List[int], seen: Set[int]):
-
-        super().__init__(decoder_state, active_node, score, lexicon)
-
-        self.sentence = sentence
-        self.heads = heads
-        self.edge_labels = edge_labels
-        self.constants = constants
-        self.children = children
-        self.lex_labels = lex_labels
-        self.seen = seen
-        self.stack = stack
-
-    def extract_tree(self) -> AMSentence:
-        sentence = self.sentence.set_heads(self.heads)
-        sentence = sentence.set_labels(self.edge_labels)
-        if self.constants is not None:
-            sentence = sentence.set_supertag_tuples(self.constants)
-        if self.lex_labels is not None:
-            sentence = sentence.set_lexlabels(self.lex_labels)
-        return sentence
-
-    def gather_context(self, device) -> Dict[str, torch.Tensor]:
-        """
-        Helper function to gather the context
-        :return:
-        """
-
-        # siblings: List[int] = get_siblings(self.children, self.heads, self.active_node)
-        # labels_of_other_children = [self.edge_labels[child-1] for child in self.children[self.active_node]]
-
-        # if self.constants is not None:
-        #     if self.active_node == 0:
-        #         supertag_of_current_node = "_"
-        #     else:
-        #         _, typ = self.constants[self.active_node-1]
-        #         supertag_of_current_node = typ
-
-        with torch.no_grad():
-            ret = {"parents": torch.from_numpy(np.array([get_parent(self.heads, self.active_node)])).to(device)}
-            # sibling_tensor = torch.zeros(max(1,len(siblings)), dtype=torch.long, device=device)
-            # for j, sibling in enumerate(siblings):
-            #     sibling_tensor[j] = sibling
-            # ret["siblings"] = sibling_tensor
-            # ret["siblings_mask"] = sibling_tensor != 0  # we initialized with 0 and 0 cannot possibly be a sibling of a node, because it's the artificial root.
-
-            children_tensor = torch.zeros(max(1, len(self.children[self.active_node])), dtype=torch.long)
-            for j, child in enumerate(self.children[self.active_node]):
-                children_tensor[j] = child
-            children_tensor = children_tensor.to(device)
-            ret["children"] = children_tensor
-            ret["children_mask"] = (children_tensor != 0) # 0 cannot be a child of a node.
-
-            # if "edge_labels" in self.lexicon.sublexica:
-            #     # edge labels of other children:
-            #     label_tensor = torch.zeros(max(1, len(labels_of_other_children)), dtype=torch.long, device=device)
-            #     for j, label in enumerate(labels_of_other_children):
-            #         label_tensor[j] = self.lexicon.get_id("edge_labels", label)
-            #     ret["children_labels"] = label_tensor
-                #mask is children_mask
-
-            # if "term_types" in self.lexicon.sublexica and self.constants is not None:
-            #     ret["lexical_types"] = torch.tensor(np.array([self.lexicon.get_id("term_types", supertag_of_current_node)]), dtype=torch.long, device=device)
-
-            return ret
+class CommonParsingState(BatchedParsingState, ABC):
+    pass
+#
+#     def __init__(self,decoder_state: Any, active_node: int, score: float,
+#                  sentence : AMSentence, lexicon : AdditionalLexicon,
+#                  heads: List[int], children: Dict[int, List[int]],
+#                  edge_labels : List[str], constants: List[Tuple[str,str]], lex_labels: List[str],
+#                  stack: List[int], seen: Set[int]):
+#
+#         super().__init__(decoder_state, active_node, score, lexicon)
+#
+#         self.sentence = sentence
+#         self.heads = heads
+#         self.edge_labels = edge_labels
+#         self.constants = constants
+#         self.children = children
+#         self.lex_labels = lex_labels
+#         self.seen = seen
+#         self.stack = stack
+#
+#     def extract_trees(self) -> AMSentence:
+#         sentence = self.sentence.set_heads(self.heads)
+#         sentence = sentence.set_labels(self.edge_labels)
+#         if self.constants is not None:
+#             sentence = sentence.set_supertag_tuples(self.constants)
+#         if self.lex_labels is not None:
+#             sentence = sentence.set_lexlabels(self.lex_labels)
+#         return sentence
+#
+#     def gather_context(self, device) -> Dict[str, torch.Tensor]:
+#         """
+#         Helper function to gather the context
+#         :return:
+#         """
+#
+#         # siblings: List[int] = get_siblings(self.children, self.heads, self.active_node)
+#         # labels_of_other_children = [self.edge_labels[child-1] for child in self.children[self.active_node]]
+#
+#         # if self.constants is not None:
+#         #     if self.active_node == 0:
+#         #         supertag_of_current_node = "_"
+#         #     else:
+#         #         _, typ = self.constants[self.active_node-1]
+#         #         supertag_of_current_node = typ
+#
+#         with torch.no_grad():
+#             ret = {"parents": torch.from_numpy(np.array([get_parent(self.heads, self.active_node)])).to(device)}
+#             # sibling_tensor = torch.zeros(max(1,len(siblings)), dtype=torch.long, device=device)
+#             # for j, sibling in enumerate(siblings):
+#             #     sibling_tensor[j] = sibling
+#             # ret["siblings"] = sibling_tensor
+#             # ret["siblings_mask"] = sibling_tensor != 0  # we initialized with 0 and 0 cannot possibly be a sibling of a node, because it's the artificial root.
+#
+#             children_tensor = torch.zeros(max(1, len(self.children[self.active_node])), dtype=torch.long)
+#             for j, child in enumerate(self.children[self.active_node]):
+#                 children_tensor[j] = child
+#             children_tensor = children_tensor.to(device)
+#             ret["children"] = children_tensor
+#             ret["children_mask"] = (children_tensor != 0) # 0 cannot be a child of a node.
+#
+#             # if "edge_labels" in self.lexicon.sublexica:
+#             #     # edge labels of other children:
+#             #     label_tensor = torch.zeros(max(1, len(labels_of_other_children)), dtype=torch.long, device=device)
+#             #     for j, label in enumerate(labels_of_other_children):
+#             #         label_tensor[j] = self.lexicon.get_id("edge_labels", label)
+#             #     ret["children_labels"] = label_tensor
+#                 #mask is children_mask
+#
+#             # if "term_types" in self.lexicon.sublexica and self.constants is not None:
+#             #     ret["lexical_types"] = torch.tensor(np.array([self.lexicon.get_id("term_types", supertag_of_current_node)]), dtype=torch.long, device=device)
+#
+#             return ret
 
 def undo_one_batching(context : Dict[str, torch.Tensor]) -> None:
     """
@@ -122,6 +233,9 @@ def undo_one_batching(context : Dict[str, torch.Tensor]) -> None:
     """
     # context["parents"] has size (batch_size, decision seq len, 1)
     context["parents"] = context["parents"].squeeze(2)
+
+    context["children"] = context["children"].squeeze(2) # now (batch_size, input_seq_len, input_seq_len)
+    context["children_mask"] = context["children_mask"].squeeze(2) # now (batch_size, input_seq_len, input_seq_len)
 
     if "lexical_types" in context:
         context["lexical_types"] = context["lexical_types"].squeeze(2)

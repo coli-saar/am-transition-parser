@@ -12,7 +12,7 @@ from topdown_parser.dataset_readers.amconll_tools import AMSentence
 from topdown_parser.nn.EdgeLabelModel import EdgeLabelModel
 from topdown_parser.nn.utils import get_device_id
 from topdown_parser.transition_systems.ltf import typ2supertag, typ2i, collect_sources
-from topdown_parser.transition_systems.parsing_state import CommonParsingState, ParsingState
+from topdown_parser.transition_systems.parsing_state import CommonParsingState, BatchedParsingState
 from topdown_parser.transition_systems.transition_system import TransitionSystem, Decision
     #, get_parent, get_siblings
 from topdown_parser.transition_systems.utils import scores_to_selection, get_and_convert_to_numpy, get_best_constant, \
@@ -42,7 +42,7 @@ class LTLState(CommonParsingState):
         self.sources_still_to_fill = sources_still_to_fill
         self.step = 0
 
-    def copy(self) -> "ParsingState":
+    def copy(self) -> "BatchedParsingState":
         copy = LTLState(self.decoder_state, self.active_node, self.score, self.sentence,
                         self.lexicon, list(self.heads), deepcopy(self.children), list(self.edge_labels),
                         list(self.constants), list(self.lex_labels), list(self.stack), set(self.seen), list(self.substack),
@@ -156,7 +156,7 @@ class LTL(TransitionSystem):
                all(x.label == y.label for x, y in zip(gold_sentence, predicted)) and \
                all(x.fragment == y.fragment and x.typ == y.typ for x, y in zip(gold_sentence, predicted))
 
-    def initial_state(self, sentence : AMSentence, decoder_state : Any) -> ParsingState:
+    def initial_state(self, sentence : AMSentence, decoder_state : Any) -> BatchedParsingState:
         stack = [0]
         seen = set()
         substack = []
@@ -174,7 +174,7 @@ class LTL(TransitionSystem):
                  constants, lex_labels, stack, seen, substack,
                  lexical_types, term_types, applysets_collected, len(sentence), False, [0 for _ in sentence])
 
-    def step(self, state: LTLState, decision: Decision, in_place: bool = False) -> ParsingState:
+    def step(self, state: LTLState, decision: Decision, in_place: bool = False) -> BatchedParsingState:
         if in_place:
             copy = state
         else:

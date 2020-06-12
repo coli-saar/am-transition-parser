@@ -7,31 +7,28 @@ import torch
 from topdown_parser.am_algebra.tree import Tree
 from topdown_parser.dataset_readers.AdditionalLexicon import AdditionalLexicon
 from topdown_parser.dataset_readers.amconll_tools import AMSentence
-from topdown_parser.transition_systems.parsing_state import CommonParsingState, ParsingState
-from topdown_parser.transition_systems.transition_system import TransitionSystem, Decision
-from topdown_parser.transition_systems.unconstrained_system import UnconstrainedTransitionSystem
+from topdown_parser.transition_systems.parsing_state import BatchedParsingState, BatchedStack, \
+    BatchedListofList
+from topdown_parser.transition_systems.transition_system import TransitionSystem, Decision, DecisionBatch
 
 
-class DFSState(CommonParsingState):
+class DFSState(BatchedParsingState):
 
-    def is_complete(self) -> bool:
-        return self.stack == []
+    def is_complete(self) -> torch.Tensor:
+        return torch.all(self.stack.is_empty())
 
-    def copy(self) -> "ParsingState":
-        return DFSState(self.decoder_state, self.active_node, self.score, self.sentence, self.lexicon,
-                        list(self.heads), deepcopy(self.children), list(self.edge_labels), list(self.constants), list(self.lex_labels),
-                        list(self.stack), set(self.seen))
 
 
 
 @TransitionSystem.register("dfs")
-class DFS(UnconstrainedTransitionSystem):
+class DFS(TransitionSystem):
 
     def __init__(self, children_order: str, pop_with_0: bool, additional_lexicon : AdditionalLexicon):
         """
         Select children_order : "LR" (left to right) or "IO" (inside-out, recommended by Ma et al.)
         """
-        super().__init__(additional_lexicon, pop_with_0)
+        super().__init__(additional_lexicon)
+        self.pop_with_0 = pop_with_0
         assert children_order in ["LR", "IO"], "unknown children order"
 
         self.children_order = children_order
@@ -50,9 +47,9 @@ class DFS(UnconstrainedTransitionSystem):
                 to_right.append(child)
 
         if is_first_child:
-            beginning = [Decision(own_position, tree.node[1].label, parent_type, parent_lex_label)]
+            beginning = [Decision(own_position, False, tree.node[1].label, parent_type, parent_lex_label)]
         else:
-            beginning = [Decision(own_position, tree.node[1].label, ("", ""), "")]
+            beginning = [Decision(own_position, False, tree.node[1].label, ("", ""), "")]
 
         if self.children_order == "LR":
             children = to_left + to_right
@@ -69,10 +66,10 @@ class DFS(UnconstrainedTransitionSystem):
         if len(tree.children) == 0:
             #This subtree has no children, thus also no first child at which we would determine the type of the parent
             #Let's determine the type now.
-            last_decision = Decision(last_position, "", (tree.node[1].fragment, tree.node[1].typ),
+            last_decision = Decision(last_position, True, "", (tree.node[1].fragment, tree.node[1].typ),
                                      tree.node[1].lexlabel)
         else:
-            last_decision = Decision(last_position, "", ("",""), "")
+            last_decision = Decision(last_position, True, "", ("",""), "")
         ret.append(last_decision)
         return ret
 
@@ -87,52 +84,76 @@ class DFS(UnconstrainedTransitionSystem):
                all(x.label == y.label for x, y in zip(gold_sentence, predicted)) and \
                all(x.fragment == y.fragment and x.typ == y.typ for x, y in zip(gold_sentence, predicted))
 
-    def initial_state(self, sentence : AMSentence, decoder_state : Any) -> ParsingState:
-        stack = [0]
-        seen = set()
-        heads = [0 for _ in range(len(sentence))]
-        children = {i: [] for i in range(len(sentence) + 1)}
-        labels = ["IGNORE" for _ in range(len(sentence))]
-        lex_labels = ["_" for _ in range(len(sentence))]
-        supertags = [("_","_") for _ in range(len(sentence))]
+    def initial_state(self, sentences : List[AMSentence], decoder_state : Any, device: Optional[int] = None) -> DFSState:
+        max_len = max(len(s) for s in sentences)+1
+        batch_size = len(sentences)
+        stack = BatchedStack(batch_size, max_len+2, device=device)
+        stack.push(torch.zeros(batch_size, dtype=torch.long, device=device), torch.ones(batch_size, dtype=torch.long, device=device))
+        return DFSState(decoder_state, sentences, stack,
+                                   BatchedListofList(batch_size, max_len, max_len, device=device),
+                                   torch.zeros(batch_size, max_len, device=device, dtype=torch.long)-1, #heads
+                                   torch.zeros(batch_size, max_len, device=device, dtype=torch.long), #labels
+                                   torch.zeros(batch_size, max_len, device=device, dtype=torch.long)-1, #constants
+                                   torch.zeros(batch_size, max_len, device=device, dtype=torch.long), # term_types
+                                   torch.zeros(batch_size, max_len, device=device, dtype=torch.long), #lex labels
+                                   self.additional_lexicon)
+        # decoder_state: Any
+        # sentences : List[AMSentence]
+        # stack: BatchedStack
+        # children : BatchedListofList #shape (batch_size, input_seq_len, input_seq_len)
+        # heads: torch.Tensor #shape (batch_size, input_seq_len) with 1-based id of parents, TO BE INITIALIZED WITH -1
+        # edge_labels : torch.Tensor #shape (batch_size, input_seq_len) with the id of the incoming edge for each token
+        # constants : torch.Tensor #shape (batch_size, input_seq_len)
+        # lex_labels : torch.Tensor #shape (batch_size, input_seq_len)
+        # lexicon : AdditionalLexicon
 
-        return DFSState(decoder_state, 0, 0.0, sentence,self.additional_lexicon, heads, children, labels, supertags, lex_labels, stack, seen)
-
-    def step(self, state : DFSState, decision: Decision, in_place: bool = False) -> ParsingState:
-        if in_place:
-            copy = state
+    def make_decision(self, scores: Dict[str, torch.Tensor], state : BatchedParsingState) -> DecisionBatch:
+        children_scores = scores["children_scores"] #shape (batch_size, input_seq_len)
+        mask = state.parent_mask() #shape (batch_size, input_seq_len)
+        depth = state.stack.depth() #shape (batch_size,)
+        active_nodes = state.stack.peek()
+        if self.pop_with_0:
+            mask[state.stack.batch_range, 0] *= (depth > 0)
         else:
-            copy = state.copy()
+            mask[state.stack.batch_range, active_nodes] *= (depth > 0)
 
-        if state.stack:
-            if decision.position == 0 and self.pop_with_0:
-                copy.stack.pop()
-            elif not self.pop_with_0 and decision.position in copy.seen:
-                popped = copy.stack.pop()
-                assert popped == decision.position
-            else:
-                copy.heads[decision.position-1] = copy.stack[-1]
+        mask = mask.long()
+        mask *= state.position_mask() #shape (batch_size, input_seq_len)
 
-                copy.children[copy.stack[-1]].append(decision.position)  # 1-based
-
-                copy.edge_labels[decision.position - 1] = decision.label
-
-                # push onto stack
-                copy.stack.append(decision.position)
-
-            if copy.constants is not None and copy.constants[state.active_node-1] == ("_","_") and state.active_node != 0:
-                copy.constants[state.active_node-1] = decision.supertag
-
-            if copy.lex_labels is not None and copy.lex_labels[state.active_node-1] == "_" and state.active_node != 0:
-                copy.lex_labels[state.active_node-1] = decision.lexlabel
-
-            copy.seen.add(decision.position)
-
-            if not copy.stack:
-                copy.active_node = 0
-            else:
-                copy.active_node = copy.stack[-1]
+        mask = (1-mask)*10_000_000
+        vals, selected_nodes = torch.max(children_scores - mask, dim=1)
+        allowed_selection = vals > -1_000_000 # we selected something that was not extremely negative, shape (batch_size,)
+        if self.pop_with_0:
+            pop_mask = torch.eq(selected_nodes, 0) #shape (batch_size,)
         else:
-            copy.active_node = 0
-        copy.score = copy.score + decision.score
-        return copy
+            pop_mask = torch.eq(selected_nodes, active_nodes)
+
+        push_mask: torch.Tensor = (~pop_mask) * allowed_selection # we push when we don't pop (but only if we are allowed to push)
+        pop_mask *= allowed_selection
+
+        edge_labels = torch.argmax(scores["edge_labels_scores"], 1)
+        constants = torch.argmax(scores["constants_scores"], 1)
+        lex_labels = scores["lex_labels"] #torch.argmax(scores["lex_labels_scores"], 1)
+        term_types = torch.argmax(scores["term_types_scores"], 1)
+
+        return DecisionBatch(selected_nodes, push_mask, pop_mask, edge_labels, constants, term_types, lex_labels, state.constant_mask()[state.stack.batch_range, active_nodes])
+
+    def step(self, state: BatchedParsingState, decision_batch: DecisionBatch) -> None:
+        """
+        Applies a decision to a parsing state.
+        :param state:
+        :param decision_batch:
+        :return:
+        """
+        next_active_nodes = state.stack.peek()
+        state.children.append(next_active_nodes, decision_batch.push_tokens, decision_batch.push_mask)
+        range_batch_size = state.stack.batch_range
+        inverse_push_mask = (1-decision_batch.push_mask.long())
+        state.heads[range_batch_size, decision_batch.push_tokens] = inverse_push_mask*state.heads[range_batch_size, decision_batch.push_tokens] + decision_batch.push_mask * next_active_nodes
+        state.edge_labels[range_batch_size, decision_batch.push_tokens] = inverse_push_mask*state.edge_labels[range_batch_size, decision_batch.push_tokens] + decision_batch.push_mask * decision_batch.edge_labels
+        inverse_constant_mask = (1-decision_batch.constant_mask.long())
+        state.constants[range_batch_size, next_active_nodes] = inverse_constant_mask *state.constants[range_batch_size, next_active_nodes] +  decision_batch.constant_mask * decision_batch.constants
+        state.lex_labels[range_batch_size, next_active_nodes] = inverse_constant_mask*state.lex_labels[range_batch_size, next_active_nodes] + decision_batch.constant_mask * decision_batch.lex_labels
+
+        state.stack.push(decision_batch.push_tokens, decision_batch.push_mask)
+        state.stack.pop_wo_peek(decision_batch.pop_mask)

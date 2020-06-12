@@ -28,7 +28,7 @@ from topdown_parser.nn.supertagger import Supertagger
 from topdown_parser.nn.utils import get_device_id, batch_and_pad_tensor_dict, index_tensor_dict, expand_tensor_dict
 from topdown_parser.transition_systems.dfs import DFS
 from topdown_parser.transition_systems.ltf import LTF
-from topdown_parser.transition_systems.parsing_state import undo_one_batching, undo_one_batching_eval, ParsingState
+from topdown_parser.transition_systems.parsing_state import undo_one_batching, undo_one_batching_eval, BatchedParsingState
 from topdown_parser.transition_systems.transition_system import TransitionSystem, Decision
 
 
@@ -553,7 +553,7 @@ class QdTopDownDependencyParser(TopDownDependencyParser):
             if all(parsing_state.is_complete() for parsing_state in parsing_states):
                 break
 
-        return [state.extract_tree() for state in parsing_states]
+        return [state.extract_trees() for state in parsing_states]
 
 
     def beam_search(self, transition_system: TransitionSystem, encoder_state: Dict[str, torch.Tensor], sentences: List[AMSentence], k : int,
@@ -591,7 +591,7 @@ class QdTopDownDependencyParser(TopDownDependencyParser):
 
         range_batch_size = get_range_vector(k*batch_size, device)
 
-        parsing_states : List[List[ParsingState]] = []
+        parsing_states : List[List[BatchedParsingState]] = []
         decoder_states_full = self.decoder.get_full_states()
         for i, sentence in enumerate(sentences):
             parsing_states.append([transition_system.initial_state(sentence, decoder_states_full[k*i+p]) for p in range(k)])
@@ -717,6 +717,6 @@ class QdTopDownDependencyParser(TopDownDependencyParser):
         ret = []
         for sentence in parsing_states:
             best_state = max(sentence, key=lambda state: state.score)
-            ret.append(best_state.extract_tree())
+            ret.append(best_state.extract_trees())
 
         return ret

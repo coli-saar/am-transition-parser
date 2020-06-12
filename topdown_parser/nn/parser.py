@@ -8,7 +8,8 @@ from allennlp.common.checks import ConfigurationError
 from allennlp.data import Vocabulary
 from allennlp.models import Model
 from allennlp.modules import TextFieldEmbedder, Embedding, Seq2SeqEncoder, InputVariationalDropout
-from allennlp.nn.util import get_text_field_mask, get_final_encoder_states, get_range_vector, batch_tensor_dicts
+from allennlp.nn.util import get_text_field_mask, get_final_encoder_states, get_range_vector, batch_tensor_dicts, \
+    get_device_of
 
 from topdown_parser.dataset_readers.amconll_tools import AMSentence
 from topdown_parser.am_algebra.tools import is_welltyped, get_tree_type
@@ -21,7 +22,8 @@ from topdown_parser.nn.EdgeModel import EdgeModel
 from topdown_parser.nn.kg_edge_model import KGEdges
 from topdown_parser.nn.supertagger import Supertagger
 from topdown_parser.nn.utils import get_device_id, index_tensor_dict, batch_and_pad_tensor_dict, expand_tensor_dict
-from topdown_parser.transition_systems.parsing_state import undo_one_batching, ParsingState, undo_one_batching_eval
+from topdown_parser.transition_systems.parsing_state import undo_one_batching, BatchedParsingState, \
+    undo_one_batching_eval, BatchedStack, BatchedListofList
 from topdown_parser.transition_systems.transition_system import TransitionSystem, Decision
 
 import heapq
@@ -459,7 +461,7 @@ class TopDownDependencyParser(Model):
         ones = loss.new_ones((batch_size, self.decoder_output_dim))
         dropout_mask = torch.nn.functional.dropout(ones, self.encoder_output_dropout_rate, self.training, inplace=False)
 
-        range_batch_size = get_range_vector(batch_size, get_device_id(seq)) # replaces range(batch_size)
+        range_batch_size = get_range_vector(batch_size, get_device_of(seq)) # replaces range(batch_size)
 
         for step in range(output_seq_len - 1):
             # Retrieve current vector corresponding to current node and feed to decoder
@@ -598,9 +600,9 @@ class TopDownDependencyParser(Model):
 
         next_active_nodes = torch.zeros(batch_size, dtype=torch.long, device = device) #start with artificial root.
 
-        range_batch_size = get_range_vector(batch_size, device)
+        range_batch_size = get_range_vector(batch_size, get_device_of(state["encoded_input"]))
 
-        parsing_states = [self.transition_system.initial_state(sentence, None) for sentence in sentences]
+        parsing_states = self.transition_system.initial_state(sentences, None, device=device)
 
         for step in range(output_seq_len):
             encoding_current_node = state["encoded_input"][range_batch_size, next_active_nodes]
@@ -608,9 +610,7 @@ class TopDownDependencyParser(Model):
 
             if self.context_provider:
                 # Generate context snapshot of current time-step.
-                current_context : List[Dict[str, torch.Tensor]] = [parsing_states[i].gather_context(device) for i in range(batch_size)]
-                current_context = batch_and_pad_tensor_dict(current_context)
-                undo_one_batching_eval(current_context)
+                current_context = parsing_states.gather_context()
             else:
                 current_context = dict()
 
@@ -658,8 +658,8 @@ class TopDownDependencyParser(Model):
                 lex_label_scores = self.lex_label_tagger.tag_scores(decoder_hidden_tagging, relevant_nodes_for_supertagging)
                 assert lex_label_scores.shape == (batch_size, self.lex_label_tagger.vocab_size)
 
-                #scores["lex_labels_scores"] = F.log_softmax(lex_label_scores,1)
-                scores["lex_labels"] = torch.argmax(lex_label_scores, 1).cpu()
+                scores["lex_labels_scores"] = F.log_softmax(lex_label_scores,1)
+                scores["lex_labels"] = torch.argmax(lex_label_scores, 1)
 
             if self.term_type_tagger is not None:
                 term_type_scores = self.term_type_tagger.tag_scores(decoder_hidden_tagging, relevant_nodes_for_supertagging)
@@ -667,22 +667,20 @@ class TopDownDependencyParser(Model):
 
                 scores["term_types_scores"] = F.log_softmax(term_type_scores, 1)
 
-            scores = { name : tensor.cpu() for name, tensor in scores.items()}
+            #scores = { name : tensor.cpu() for name, tensor in scores.items()}
             ### Update current node according to transition system:
-            active_nodes = []
-            for i, parsing_state in enumerate(parsing_states):
-                decision = self.transition_system.make_decision(index_tensor_dict(scores,i), parsing_state)
-                parsing_states[i] = self.transition_system.step(parsing_state, decision, in_place = True)
-                active_nodes.append(parsing_states[i].active_node)
+            decision_batch = self.transition_system.make_decision(scores, parsing_states)
 
-            next_active_nodes = torch.tensor(active_nodes, dtype=torch.long, device=device)
+            self.transition_system.step(parsing_states, decision_batch)
+
+            next_active_nodes = parsing_states.stack.peek()
 
             assert next_active_nodes.shape == (batch_size,)
 
-            if all(parsing_state.is_complete() for parsing_state in parsing_states):
+            if parsing_states.is_complete():
                 break
 
-        return [state.extract_tree() for state in parsing_states]
+        return parsing_states.extract_trees()
 
 
     def beam_search(self, encoder_state: Dict[str, torch.Tensor], sentences: List[AMSentence], k : int) -> List[AMSentence]:
@@ -692,6 +690,7 @@ class TopDownDependencyParser(Model):
         :param encoder_state:
         :return:
         """
+        raise NotImplementedError()
         batch_size, input_seq_len, encoder_dim = encoder_state["encoded_input"].shape
         device = get_device_id(encoder_state["encoded_input"])
 
@@ -719,7 +718,7 @@ class TopDownDependencyParser(Model):
 
         range_batch_size = get_range_vector(k*batch_size, device)
 
-        parsing_states : List[List[ParsingState]] = []
+        parsing_states : List[List[BatchedParsingState]] = []
         decoder_states_full = self.decoder.get_full_states()
         for i, sentence in enumerate(sentences):
             parsing_states.append([self.transition_system.initial_state(sentence, decoder_states_full[k*i+p]) for p in range(k)])
@@ -846,7 +845,7 @@ class TopDownDependencyParser(Model):
         ret = []
         for sentence in parsing_states:
             best_state = max(sentence, key=lambda state: state.score)
-            ret.append(best_state.extract_tree())
+            ret.append(best_state.extract_trees())
 
         return ret
 

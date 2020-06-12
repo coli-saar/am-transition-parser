@@ -16,7 +16,7 @@ from topdown_parser.dataset_readers.amconll_tools import AMSentence
 from topdown_parser.nn.EdgeLabelModel import EdgeLabelModel
 from topdown_parser.nn.utils import get_device_id
 from topdown_parser.transition_systems import utils
-from topdown_parser.transition_systems.parsing_state import CommonParsingState, ParsingState
+from topdown_parser.transition_systems.parsing_state import CommonParsingState, BatchedParsingState
 from topdown_parser.transition_systems.transition_system import TransitionSystem, Decision
 #from topdown_parser.transition_systems.parsing_state import get_parent, get_siblings
 from topdown_parser.transition_systems.utils import scores_to_selection, get_best_constant, single_score_to_selection, \
@@ -70,7 +70,7 @@ class LTFState(CommonParsingState):
         self.root_determined = root_determined
         self.term_types = term_types
 
-    def copy(self) -> "ParsingState":
+    def copy(self) -> "BatchedParsingState":
         return LTFState(self.decoder_state, self.active_node, self.score, self.sentence,
                         self.lexicon, list(self.heads), {node: list(children) for node, children in self.children.items()}, list(self.edge_labels),
                         list(self.constants), list(self.lex_labels), list(self.stack), set(self.seen),
@@ -205,7 +205,7 @@ class LTF(TransitionSystem):
     #             s += len(applyset_todo)
     #     return s
 
-    def initial_state(self, sentence : AMSentence, decoder_state : Any) -> ParsingState:
+    def initial_state(self, sentence : AMSentence, decoder_state : Any) -> BatchedParsingState:
         stack = [0]
         seen = set()
         heads = [0 for _ in range(len(sentence))]
@@ -222,7 +222,7 @@ class LTF(TransitionSystem):
                         supertags, lex_labels, stack, seen,
                         lexical_types, term_types, applysets_todo, len(sentence), False)
 
-    def step(self, state: LTFState, decision: Decision, in_place: bool = False) -> ParsingState:
+    def step(self, state: LTFState, decision: Decision, in_place: bool = False) -> BatchedParsingState:
         if in_place:
             copy = state
         else:

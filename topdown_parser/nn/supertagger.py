@@ -3,7 +3,7 @@ from allennlp.common import Registrable
 from allennlp.data import Vocabulary
 from allennlp.models import Model
 from allennlp.modules import FeedForward
-from allennlp.nn.util import get_range_vector
+from allennlp.nn.util import get_range_vector, get_device_of
 from torch import nn
 from torch.nn import Module
 
@@ -76,7 +76,7 @@ class CombinedTagger(Supertagger):
         self.encoded_input = encoded_input
         batch_size = encoded_input.shape[0]
         self.mask = mask
-        self.batch_size_range = get_range_vector(batch_size, get_device_id(encoded_input))
+        self.batch_size_range = get_range_vector(batch_size, get_device_of(encoded_input))
 
     def tag_scores(self, decoder: torch.Tensor, active_node : torch.Tensor) -> torch.Tensor:
         #Find embeddings of active nodes.

@@ -9,10 +9,10 @@ from topdown_parser.dataset_readers.AdditionalLexicon import AdditionalLexicon
 from topdown_parser.dataset_readers.amconll_tools import AMSentence
 from topdown_parser.nn.EdgeLabelModel import EdgeLabelModel
 from topdown_parser.nn.utils import get_device_id
-from topdown_parser.transition_systems.parsing_state import CommonParsingState, ParsingState
+from topdown_parser.transition_systems.parsing_state import CommonParsingState, BatchedParsingState
 from topdown_parser.transition_systems.transition_system import TransitionSystem, Decision
 #from topdown_parser.transition_systems.parsing_state import get_parent, get_siblings
-from topdown_parser.transition_systems.unconstrained_system import UnconstrainedTransitionSystem
+#from topdown_parser.transition_systems.unconstrained_system import UnconstrainedTransitionSystem
 from topdown_parser.transition_systems.utils import scores_to_selection, single_score_to_selection
 
 
@@ -33,7 +33,7 @@ class DFSChildrenFirstState(CommonParsingState):
     def is_complete(self) -> bool:
         return self.stack == []
 
-    def copy(self) -> "ParsingState":
+    def copy(self) -> "BatchedParsingState":
         copy = DFSChildrenFirstState(self.decoder_state, self.active_node, self.score, self.sentence, self.lexicon,
                             list(self.heads), deepcopy(self.children), list(self.edge_labels), list(self.constants), list(self.lex_labels),
                             list(self.stack), set(self.seen), list(self.substack))
@@ -41,7 +41,7 @@ class DFSChildrenFirstState(CommonParsingState):
         return copy
 
 @TransitionSystem.register("dfs-children-first")
-class DFSChildrenFirst(UnconstrainedTransitionSystem):
+class DFSChildrenFirst(TransitionSystem):
     """
     DFS where when a node is visited for the second time, all its children are visited once.
     Afterwards, the first child is visited for the second time. Then the second child etc.
@@ -55,7 +55,8 @@ class DFSChildrenFirst(UnconstrainedTransitionSystem):
         reverse_push_actions means that the order of push actions is the opposite order in which the children of
         the node are recursively visited.
         """
-        super().__init__(additional_lexicon, pop_with_0)
+        super().__init__(additional_lexicon)
+        self.pop_with_0=pop_with_0
         self.reverse_push_actions = reverse_push_actions
         assert children_order in ["LR", "IO", "RL"], "unknown children order"
 
@@ -110,7 +111,7 @@ class DFSChildrenFirst(UnconstrainedTransitionSystem):
                all(x.fragment == y.fragment and x.typ == y.typ for x, y in zip(gold_sentence, predicted))
 
 
-    def initial_state(self, sentence : AMSentence, decoder_state : Any) -> ParsingState:
+    def initial_state(self, sentence : AMSentence, decoder_state : Any) -> BatchedParsingState:
         stack = [0]
         seen = set()
         substack = []
@@ -123,7 +124,7 @@ class DFSChildrenFirst(UnconstrainedTransitionSystem):
         return DFSChildrenFirstState(decoder_state, 0, 0.0, sentence, self.additional_lexicon, heads,
                                     children, labels, supertags, lex_labels, stack, seen, substack)
 
-    def step(self, state : DFSChildrenFirstState, decision: Decision, in_place: bool = False) -> ParsingState:
+    def step(self, state : DFSChildrenFirstState, decision: Decision, in_place: bool = False) -> BatchedParsingState:
         if in_place:
             copy = state
         else:
