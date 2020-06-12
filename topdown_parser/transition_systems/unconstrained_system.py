@@ -39,8 +39,10 @@ class UnconstrainedTransitionSystem(TransitionSystem):
         score = 0.0
         s, selected_node = torch.max(child_scores, dim=0)
         score += s
-        s, selected_label = single_score_to_selection(scores, self.additional_lexicon, "edge_labels")
-        score += s
+        s, selected_label_id = torch.max(scores["all_labels_scores"][selected_node], dim=0)
+        selected_label = self.additional_lexicon.get_str_repr("edge_labels", int(selected_label_id.cpu().numpy()))
+
+        score += s.cpu().numpy()
 
         if "constants_scores" in scores:
             s, selected_supertag = single_score_to_selection(scores, self.additional_lexicon, "constants")

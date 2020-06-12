@@ -318,7 +318,7 @@ class LTL(TransitionSystem):
             return Decision(pop_node, "", AMSentence.split_supertag(self.additional_lexicon.get_str_repr("constants", best_constant)), selected_lex_label, score=score)
 
         # APP or MOD?
-        label_scores = scores["edge_labels_scores"].cpu().numpy()
+        label_scores = scores["all_labels_scores"][selected_node].cpu().numpy() #shape (edge vocab size)
 
         max_apply_score = -np.inf
         #best_apply_source = None

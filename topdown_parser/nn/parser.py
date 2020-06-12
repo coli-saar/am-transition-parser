@@ -626,7 +626,7 @@ class TopDownDependencyParser(Model):
             # Apply filtering of valid choices:
             edge_scores = edge_scores - inverted_input_mask #- INF*(1-valid_choices)
 
-            selected_nodes = torch.argmax(edge_scores, dim=1)
+            #selected_nodes = torch.argmax(edge_scores, dim=1)
             # assert selected_nodes.shape == (batch_size,)
             # all_selected_nodes.append(selected_nodes)
 
@@ -636,16 +636,18 @@ class TopDownDependencyParser(Model):
                                                 #"inverted_input_mask" : inverted_input_mask}
 
             # Compute edge label scores, perhaps they are useful to parsing procedure, perhaps it has to recompute.
-            edge_label_scores = self.edge_label_model.edge_label_scores(selected_nodes, decoder_hidden)
-            assert edge_label_scores.shape == (batch_size, self.edge_label_model.vocab_size)
-
-            scores["edge_labels_scores"] = edge_label_scores #F.log_softmax(edge_label_scores,1) #log softmax happened earlier already.
+            #edge_label_scores = self.edge_label_model.edge_label_scores(selected_nodes, decoder_hidden)
+            #assert edge_label_scores.shape == (batch_size, self.edge_label_model.vocab_size)
+            all_label_scores = self.edge_label_model.all_label_scores(decoder_hidden)
+            assert all_label_scores.shape == (batch_size, input_seq_len, self.edge_label_model.vocab_size)
+            scores["all_labels_scores"] = all_label_scores
+            #edge_label_scores #F.log_softmax(edge_label_scores,1) #log softmax happened earlier already.
 
             #####################
             if self.transition_system.predict_supertag_from_tos():
                 relevant_nodes_for_supertagging = next_active_nodes
             else:
-                relevant_nodes_for_supertagging = selected_nodes
+                raise NotImplementedError("This option should not be used anymore.")
 
             #Compute supertags:
             if self.supertagger is not None:
