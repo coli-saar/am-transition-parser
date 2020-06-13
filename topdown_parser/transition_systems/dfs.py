@@ -131,7 +131,7 @@ class DFS(TransitionSystem):
         push_mask: torch.Tensor = (~pop_mask) * allowed_selection # we push when we don't pop (but only if we are allowed to push)
         pop_mask *= allowed_selection
 
-        edge_labels = torch.argmax(scores["edge_labels_scores"], 1)
+        edge_labels = torch.argmax(scores["all_labels_scores"][state.stack.batch_range, selected_nodes], 1)
         constants = torch.argmax(scores["constants_scores"], 1)
         lex_labels = scores["lex_labels"] #torch.argmax(scores["lex_labels_scores"], 1)
         term_types = torch.argmax(scores["term_types_scores"], 1)
