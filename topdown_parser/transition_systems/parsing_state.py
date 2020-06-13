@@ -164,8 +164,9 @@ class BatchedParsingState:
         various kinds of information, we can condition on.
         """
         active_nodes = self.stack.peek() #shape (batch_size,)
-        return {"parents": F.relu(self.heads[self.stack.batch_range, active_nodes]), "children": self.children.outer_index(active_nodes),
-                "children_mask" : self.children.outer_index(active_nodes) == 0}
+        context = {"parents": F.relu(self.heads[self.stack.batch_range, active_nodes]), "children": self.children.outer_index(active_nodes),
+                   "children_mask" : self.children.outer_index(active_nodes) != 0}
+        return context
 
     def copy(self) -> "BatchedParsingState":
         """
