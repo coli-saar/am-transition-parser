@@ -636,10 +636,18 @@ class TopDownDependencyParser(Model):
                                                 #"inverted_input_mask" : inverted_input_mask}
 
             # Compute edge label scores, perhaps they are useful to parsing procedure, perhaps it has to recompute.
-            edge_label_scores = self.edge_label_model.edge_label_scores(selected_nodes, decoder_hidden)
-            assert edge_label_scores.shape == (batch_size, self.edge_label_model.vocab_size)
+            #edge_label_scores = self.edge_label_model.edge_label_scores(selected_nodes, decoder_hidden)
+            #assert edge_label_scores.shape == (batch_size, self.edge_label_model.vocab_size)
+            all_label_scores = self.edge_label_model.all_label_scores(decoder_hidden)
+            assert all_label_scores.shape == (batch_size, input_seq_len, self.edge_label_model.vocab_size)
+            scores["all_labels_scores"] = all_label_scores
+            #edge_label_scores #F.log_softmax(edge_label_scores,1) #log softmax happened earlier already.
 
-            scores["edge_labels_scores"] = edge_label_scores #F.log_softmax(edge_label_scores,1) #log softmax happened earlier already.
+            #####################
+            if self.transition_system.predict_supertag_from_tos():
+                relevant_nodes_for_supertagging = next_active_nodes
+            else:
+                raise NotImplementedError("This option should not be used anymore.")
 
             #####################
             if self.transition_system.predict_supertag_from_tos():

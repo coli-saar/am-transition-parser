@@ -152,7 +152,7 @@ class DFS(TransitionSystem):
         state.heads[range_batch_size, decision_batch.push_tokens] = inverse_push_mask*state.heads[range_batch_size, decision_batch.push_tokens] + decision_batch.push_mask * next_active_nodes
         state.edge_labels[range_batch_size, decision_batch.push_tokens] = inverse_push_mask*state.edge_labels[range_batch_size, decision_batch.push_tokens] + decision_batch.push_mask * decision_batch.edge_labels
         inverse_constant_mask = (1-decision_batch.constant_mask.long())
-        state.constants[range_batch_size, next_active_nodes] = inverse_constant_mask *state.constants[range_batch_size, next_active_nodes] +  decision_batch.constant_mask * decision_batch.constants
+        state.constants[range_batch_size, next_active_nodes] = inverse_constant_mask * state.constants[range_batch_size, next_active_nodes] + decision_batch.constant_mask * decision_batch.constants
         state.lex_labels[range_batch_size, next_active_nodes] = inverse_constant_mask*state.lex_labels[range_batch_size, next_active_nodes] + decision_batch.constant_mask * decision_batch.lex_labels
 
         state.stack.push(decision_batch.push_tokens, decision_batch.push_mask)
