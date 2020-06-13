@@ -19,11 +19,18 @@ class BatchedStack:
         self.stack = torch.zeros(batch_size, max_capacity, dtype=stacktype, device=device)
         self.stack_ptr = torch.zeros(batch_size, dtype=torch.long, device=device)
         self.batch_range = torch.arange(batch_size, dtype=torch.long, device=device)
+        self.done_mask = torch.zeros(batch_size, dtype=torch.bool, device=device)
 
     def depth(self) -> torch.Tensor:
         return self.stack_ptr.clone()
 
-    def push(self, vector, mask):
+    def push(self, vector : torch.Tensor, mask : torch.Tensor) -> None:
+        """
+        Pushes a vector to the stack, but only for those cases where the mask is 1.
+        :param vector: shape (batch_size,)
+        :param mask: shape (batch_size,)
+        :return:
+        """
         mask = mask.long()
         self.stack_ptr += mask
         self.stack[self.batch_range, self.stack_ptr] = (1-mask)*self.stack[self.batch_range, self.stack_ptr] + mask * vector
@@ -31,15 +38,33 @@ class BatchedStack:
     def peek(self):
         return self.stack[self.batch_range, self.stack_ptr]
 
-    def pop_wo_peek(self, mask : torch.Tensor):
+    def get_done(self):
+        """
+        Return places where stack has become empty through pop operations.
+        :return:
+        """
+        return self.done_mask
+
+    def pop_wo_peek(self, mask : torch.Tensor) -> None:
+        """
+        Remove the top of the stack for those positions where mask[i] = 1
+        :param mask: shape (batch_size,)
+        :return:
+        """
         self.stack_ptr -= mask.long()
+        self.done_mask |= (self.stack_ptr == 0)
         if torch.any(self.stack_ptr < 0):
             raise ValueError("Stack empty")
 
     def is_empty(self) -> torch.Tensor:
         return self.stack_ptr == 0
 
-    def pop(self, mask):
+    def pop(self, mask) -> torch.Tensor:
+        """
+        Combination of peek and pop_wo_peek()
+        :param mask: where to pop things from the stack.
+        :return:
+        """
         r = self.peek()
         self.pop_wo_peek(mask)
         return r

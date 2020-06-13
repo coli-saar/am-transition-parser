@@ -118,25 +118,30 @@ class DFS(TransitionSystem):
             mask[state.stack.batch_range, active_nodes] *= (depth > 0)
 
         mask = mask.long()
-        mask *= state.position_mask() #shape (batch_size, input_seq_len)
+        mask *= state.position_mask()  # shape (batch_size, input_seq_len)
 
         mask = (1-mask)*10_000_000
         vals, selected_nodes = torch.max(children_scores - mask, dim=1)
-        allowed_selection = vals > -1_000_000 # we selected something that was not extremely negative, shape (batch_size,)
+        allowed_selection = vals > -1_000_000  # we selected something that was not extremely negative, shape (batch_size,)
         if self.pop_with_0:
-            pop_mask = torch.eq(selected_nodes, 0) #shape (batch_size,)
+            pop_mask = torch.eq(selected_nodes, 0)  #shape (batch_size,)
         else:
             pop_mask = torch.eq(selected_nodes, active_nodes)
 
-        push_mask: torch.Tensor = (~pop_mask) * allowed_selection # we push when we don't pop (but only if we are allowed to push)
+        push_mask: torch.Tensor = (~pop_mask) * allowed_selection  # we push when we don't pop (but only if we are allowed to push)
+        not_done = ~state.stack.get_done()
+        push_mask *= not_done  # we can only push if we are not done with the sentence yet.
         pop_mask *= allowed_selection
+        pop_mask *= not_done
 
         edge_labels = torch.argmax(scores["all_labels_scores"][state.stack.batch_range, selected_nodes], 1)
         constants = torch.argmax(scores["constants_scores"], 1)
-        lex_labels = scores["lex_labels"] #torch.argmax(scores["lex_labels_scores"], 1)
+        lex_labels = scores["lex_labels"]  # torch.argmax(scores["lex_labels_scores"], 1)
         term_types = torch.argmax(scores["term_types_scores"], 1)
 
-        return DecisionBatch(selected_nodes, push_mask, pop_mask, edge_labels, constants, term_types, lex_labels, state.constant_mask()[state.stack.batch_range, active_nodes])
+        constant_mask = state.constant_mask()[state.stack.batch_range, active_nodes]
+        constant_mask *= not_done
+        return DecisionBatch(selected_nodes, push_mask, pop_mask, edge_labels, constants, term_types, lex_labels, constant_mask)
 
     def step(self, state: BatchedParsingState, decision_batch: DecisionBatch) -> None:
         """
