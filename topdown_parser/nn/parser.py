@@ -626,7 +626,7 @@ class TopDownDependencyParser(Model):
             # Apply filtering of valid choices:
             edge_scores = edge_scores - inverted_input_mask #- INF*(1-valid_choices)
 
-            selected_nodes = torch.argmax(edge_scores, dim=1)
+            #selected_nodes = torch.argmax(edge_scores, dim=1)
             # assert selected_nodes.shape == (batch_size,)
             # all_selected_nodes.append(selected_nodes)
 
@@ -648,12 +648,6 @@ class TopDownDependencyParser(Model):
                 relevant_nodes_for_supertagging = next_active_nodes
             else:
                 raise NotImplementedError("This option should not be used anymore.")
-
-            #####################
-            if self.transition_system.predict_supertag_from_tos():
-                relevant_nodes_for_supertagging = next_active_nodes
-            else:
-                relevant_nodes_for_supertagging = selected_nodes
 
             #Compute supertags:
             if self.supertagger is not None:

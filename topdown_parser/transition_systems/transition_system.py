@@ -143,8 +143,8 @@ class TransitionSystem(Registrable):
         :param decision:
         :return:
         """
-        children_scores = torch.zeros(len(sentence)+1)
-        children_scores[decision.position] = 1
+        children_scores = torch.zeros(1, len(sentence)+1)
+        children_scores[0, decision.position] = 1
         constant_scores = torch.zeros(1, self.additional_lexicon.vocab_size("constants"))
         if decision.supertag is not None:
             constant_scores[0, self.additional_lexicon.get_id("constants", "--TYPE--".join(decision.supertag))] = 1
