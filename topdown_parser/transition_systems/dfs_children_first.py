@@ -7,38 +7,21 @@ import torch
 from topdown_parser.am_algebra.tree import Tree
 from topdown_parser.dataset_readers.AdditionalLexicon import AdditionalLexicon
 from topdown_parser.dataset_readers.amconll_tools import AMSentence
+from topdown_parser.datastructures.list_of_list import BatchedListofList
+from topdown_parser.datastructures.stack import BatchedStack
 from topdown_parser.nn.EdgeLabelModel import EdgeLabelModel
 from topdown_parser.nn.utils import get_device_id
 from topdown_parser.transition_systems.parsing_state import CommonParsingState, BatchedParsingState
-from topdown_parser.transition_systems.transition_system import TransitionSystem, Decision
+from topdown_parser.transition_systems.transition_system import TransitionSystem, Decision, DecisionBatch
 #from topdown_parser.transition_systems.parsing_state import get_parent, get_siblings
 #from topdown_parser.transition_systems.unconstrained_system import UnconstrainedTransitionSystem
 from topdown_parser.transition_systems.utils import scores_to_selection, single_score_to_selection
 
 
-class DFSChildrenFirstState(CommonParsingState):
+class DFSChildrenFirstState(BatchedParsingState):
 
-    def __init__(self, decoder_state: Any, active_node: int, score: float,
-                 sentence : AMSentence, lexicon : AdditionalLexicon,
-                 heads: List[int], children: Dict[int, List[int]], edge_labels: List[str],
-                 constants : List[Tuple[str,str]], lex_labels : List[str],
-                 stack : List[int], seen : Set[int], substack : List[int]):
-
-        super().__init__(decoder_state, active_node, score, sentence, lexicon, heads, children, edge_labels,
-                         constants, lex_labels, stack, seen)
-
-        self.substack = substack
-        self.step = 0
-
-    def is_complete(self) -> bool:
-        return self.stack == []
-
-    def copy(self) -> "BatchedParsingState":
-        copy = DFSChildrenFirstState(self.decoder_state, self.active_node, self.score, self.sentence, self.lexicon,
-                            list(self.heads), deepcopy(self.children), list(self.edge_labels), list(self.constants), list(self.lex_labels),
-                            list(self.stack), set(self.seen), list(self.substack))
-        copy.step = self.step
-        return copy
+    def is_complete(self) -> torch.Tensor:
+        return torch.all(self.stack.is_empty())
 
 @TransitionSystem.register("dfs-children-first")
 class DFSChildrenFirst(TransitionSystem):
@@ -111,65 +94,82 @@ class DFSChildrenFirst(TransitionSystem):
                all(x.fragment == y.fragment and x.typ == y.typ for x, y in zip(gold_sentence, predicted))
 
 
-    def initial_state(self, sentence : AMSentence, decoder_state : Any) -> BatchedParsingState:
-        stack = [0]
-        seen = set()
-        substack = []
-        heads = [0 for _ in range(len(sentence))]
-        children = {i: [] for i in range(len(sentence) + 1)}
-        labels = ["IGNORE" for _ in range(len(sentence))]
-        lex_labels = ["_" for _ in range(len(sentence))]
-        supertags = [("_","_") for _ in range(len(sentence))]
+    def initial_state(self, sentences : List[AMSentence], decoder_state : Any, device: Optional[int] = None) -> DFSChildrenFirstState:
+        max_len = max(len(s) for s in sentences)+1
+        batch_size = len(sentences)
+        stack = BatchedStack(batch_size, max_len+2, device=device)
+        stack.push(torch.zeros(batch_size, dtype=torch.long, device=device), torch.ones(batch_size, dtype=torch.long, device=device))
+        return DFSChildrenFirstState(decoder_state, sentences, stack,
+                        BatchedListofList(batch_size, max_len, max_len, device=device),
+                        torch.zeros(batch_size, max_len, device=device, dtype=torch.long)-1, #heads
+                        torch.zeros(batch_size, max_len, device=device, dtype=torch.long), #labels
+                        torch.zeros(batch_size, max_len, device=device, dtype=torch.long)-1, #constants
+                        torch.zeros(batch_size, max_len, device=device, dtype=torch.long), # term_types
+                        torch.zeros(batch_size, max_len, device=device, dtype=torch.long), #lex labels
+                        self.additional_lexicon)
+        # decoder_state: Any
+        # sentences : List[AMSentence]
+        # stack: BatchedStack
+        # children : BatchedListofList #shape (batch_size, input_seq_len, input_seq_len)
+        # heads: torch.Tensor #shape (batch_size, input_seq_len) with 1-based id of parents, TO BE INITIALIZED WITH -1
+        # edge_labels : torch.Tensor #shape (batch_size, input_seq_len) with the id of the incoming edge for each token
+        # constants : torch.Tensor #shape (batch_size, input_seq_len)
+        # lex_labels : torch.Tensor #shape (batch_size, input_seq_len)
+        # lexicon : AdditionalLexicon
 
-        return DFSChildrenFirstState(decoder_state, 0, 0.0, sentence, self.additional_lexicon, heads,
-                                    children, labels, supertags, lex_labels, stack, seen, substack)
-
-    def step(self, state : DFSChildrenFirstState, decision: Decision, in_place: bool = False) -> BatchedParsingState:
-        if in_place:
-            copy = state
+    def make_decision(self, scores: Dict[str, torch.Tensor], state : BatchedParsingState) -> DecisionBatch:
+        children_scores = scores["children_scores"] #shape (batch_size, input_seq_len)
+        mask = state.parent_mask() #shape (batch_size, input_seq_len)
+        depth = state.stack.depth() #shape (batch_size,)
+        active_nodes = state.stack.peek()
+        if self.pop_with_0:
+            mask[state.stack.batch_range, 0] *= (depth > 0)
         else:
-            copy = state.copy()
-        copy.step += 1
+            mask[state.stack.batch_range, active_nodes] *= (depth > 0)
 
-        if state.stack:
-            position = decision.position
+        mask = mask.long()
+        mask *= state.position_mask()  # shape (batch_size, input_seq_len)
 
-            if (position in copy.seen and not self.pop_with_0) or \
-                (position == 0 and self.pop_with_0) or copy.step == 2: #second step is always pop
-                tos = copy.stack.pop()
-
-                if not self.pop_with_0:
-                    assert tos == position
-
-                if copy.constants is not None and tos != 0:
-                    copy.constants[tos - 1] = decision.supertag
-
-                if copy.lex_labels is not None and tos != 0:
-                    copy.lex_labels[tos - 1] = decision.lexlabel
-
-                if self.reverse_push_actions:
-                    copy.stack.extend(copy.substack)
-                else:
-                    copy.stack.extend(reversed(copy.substack))
-                copy.substack = []
-            else:
-                copy.heads[position - 1] = copy.stack[-1]
-
-                copy.children[copy.stack[-1]].append(position)  # 1-based
-
-                copy.edge_labels[position - 1] = decision.label
-
-                # push onto stack
-                copy.substack.append(position)
-
-            copy.seen.add(position)
-            if copy.stack:
-                copy.active_node = copy.stack[-1]
-            else:
-                copy.active_node = 0
+        mask = (1-mask)*10_000_000
+        vals, selected_nodes = torch.max(children_scores - mask, dim=1)
+        allowed_selection = vals > -1_000_000  # we selected something that was not extremely negative, shape (batch_size,)
+        if self.pop_with_0:
+            pop_mask = torch.eq(selected_nodes, 0)  #shape (batch_size,)
         else:
-            copy.active_node = 0
-        copy.score = copy.score + decision.score
-        return copy
+            pop_mask = torch.eq(selected_nodes, active_nodes)
 
+        push_mask: torch.Tensor = (~pop_mask) * allowed_selection  # we push when we don't pop (but only if we are allowed to push)
+        not_done = ~state.stack.get_done()
+        push_mask *= not_done  # we can only push if we are not done with the sentence yet.
+        pop_mask *= allowed_selection
+        pop_mask *= not_done
+
+        edge_labels = torch.argmax(scores["all_labels_scores"][state.stack.batch_range, selected_nodes], 1)
+        constants = torch.argmax(scores["constants_scores"], 1)
+        lex_labels = scores["lex_labels"]  # torch.argmax(scores["lex_labels_scores"], 1)
+        term_types = torch.argmax(scores["term_types_scores"], 1)
+
+        return DecisionBatch(selected_nodes, push_mask, pop_mask, edge_labels, constants, term_types, lex_labels, pop_mask)
+
+    def step(self, state: DFSChildrenFirstState, decision_batch: DecisionBatch) -> None:
+        """
+        Applies a decision to a parsing state.
+        :param state:
+        :param decision_batch:
+        :return:
+        """
+        next_active_nodes = state.stack.peek()
+        state.children.append(next_active_nodes, decision_batch.push_tokens, decision_batch.push_mask)
+        range_batch_size = state.stack.batch_range
+        inverse_push_mask = (1-decision_batch.push_mask.long())
+        state.heads[range_batch_size, decision_batch.push_tokens] = inverse_push_mask*state.heads[range_batch_size, decision_batch.push_tokens] + decision_batch.push_mask * next_active_nodes
+        state.edge_labels[range_batch_size, decision_batch.push_tokens] = inverse_push_mask*state.edge_labels[range_batch_size, decision_batch.push_tokens] + decision_batch.push_mask * decision_batch.edge_labels
+        inverse_constant_mask = (1-decision_batch.constant_mask.long())
+        state.constants[range_batch_size, next_active_nodes] = inverse_constant_mask * state.constants[range_batch_size, next_active_nodes] + decision_batch.constant_mask * decision_batch.constants
+        state.lex_labels[range_batch_size, next_active_nodes] = inverse_constant_mask*state.lex_labels[range_batch_size, next_active_nodes] + decision_batch.constant_mask * decision_batch.lex_labels
+
+        pop_mask = decision_batch.pop_mask #shape (batch_size,)
+        push_all_children_mask = state.children.lol[range_batch_size, next_active_nodes]
+        state.stack.push(decision_batch.push_tokens, decision_batch.push_mask)
+        state.stack.pop_wo_peek(decision_batch.pop_mask)
 

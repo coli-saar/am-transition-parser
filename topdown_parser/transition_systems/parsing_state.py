@@ -11,88 +11,10 @@ import torch.nn.functional as F
 
 import numpy as np
 
+from topdown_parser.datastructures.list_of_list import BatchedListofList
+from topdown_parser.datastructures.stack import BatchedStack
 from topdown_parser.nn.utils import get_device_id
 
-
-class BatchedStack:
-    def __init__(self, batch_size : int, max_capacity: int, device = None, stacktype : Optional[torch.dtype] = torch.long):
-        self.stack = torch.zeros(batch_size, max_capacity, dtype=stacktype, device=device)
-        self.stack_ptr = torch.zeros(batch_size, dtype=torch.long, device=device)
-        self.batch_range = torch.arange(batch_size, dtype=torch.long, device=device)
-        self.done_mask = torch.zeros(batch_size, dtype=torch.bool, device=device)
-
-    def depth(self) -> torch.Tensor:
-        return self.stack_ptr.clone()
-
-    def push(self, vector : torch.Tensor, mask : torch.Tensor) -> None:
-        """
-        Pushes a vector to the stack, but only for those cases where the mask is 1.
-        :param vector: shape (batch_size,)
-        :param mask: shape (batch_size,)
-        :return:
-        """
-        mask = mask.long()
-        self.stack_ptr += mask
-        self.stack[self.batch_range, self.stack_ptr] = (1-mask)*self.stack[self.batch_range, self.stack_ptr] + mask * vector
-
-    def peek(self):
-        return self.stack[self.batch_range, self.stack_ptr]
-
-    def get_done(self):
-        """
-        Return places where stack has become empty through pop operations.
-        :return:
-        """
-        return self.done_mask
-
-    def pop_wo_peek(self, mask : torch.Tensor) -> None:
-        """
-        Remove the top of the stack for those positions where mask[i] = 1
-        :param mask: shape (batch_size,)
-        :return:
-        """
-        self.stack_ptr -= mask.long()
-        self.done_mask |= (self.stack_ptr == 0)
-        if torch.any(self.stack_ptr < 0):
-            raise ValueError("Stack empty")
-
-    def is_empty(self) -> torch.Tensor:
-        return self.stack_ptr == 0
-
-    def pop(self, mask) -> torch.Tensor:
-        """
-        Combination of peek and pop_wo_peek()
-        :param mask: where to pop things from the stack.
-        :return:
-        """
-        r = self.peek()
-        self.pop_wo_peek(mask)
-        return r
-
-class BatchedListofList:
-    """
-    A list of lists for each batch element. Basically a tensor of shape (batch_size, outer_size, inner_size)
-    """
-    def __init__(self, batch_size : int, outer_size: int, inner_size : int, device = None, stacktype : Optional[torch.dtype] = torch.long):
-        self.lol = torch.zeros(batch_size, outer_size, inner_size, dtype=stacktype, device=device)
-        self.ptr = torch.zeros(batch_size, outer_size, dtype=torch.long, device=device)
-        self.batch_range = torch.arange(batch_size, dtype=torch.long, device=device)
-
-    def outer_index(self, indices):
-        return self.lol[self.batch_range, indices]
-
-    def append(self, outer_indices, vector, mask):
-        """
-
-        :param outer_indices: shape (outer_size,)
-        :param vector: shape (batch_size,)
-        :param mask:
-        :return:
-        """
-        mask = mask.long()
-        self.lol[self.batch_range, outer_indices, self.ptr[self.batch_range, outer_indices]] = (1-mask)*self.lol[self.batch_range, outer_indices, self.ptr[self.batch_range, outer_indices]]\
-                                                                                               + mask * vector
-        self.ptr[self.batch_range, outer_indices] += mask
 
 
 
