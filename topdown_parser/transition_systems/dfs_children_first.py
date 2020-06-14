@@ -70,7 +70,7 @@ class DFSChildrenFirst(TransitionSystem):
             if child.node[1].label == "IGNORE":
                 continue
 
-            push_actions.append(Decision(child.node[0], child.node[1].label, ("", ""), ""))
+            push_actions.append(Decision(child.node[0], False, child.node[1].label, ("", ""), ""))
             recursive_actions.extend(self._construct_seq(child))
 
         if self.pop_with_0:
@@ -81,11 +81,11 @@ class DFSChildrenFirst(TransitionSystem):
         if self.reverse_push_actions:
             push_actions = list(reversed(push_actions))
 
-        return push_actions + [Decision(relevant_position, "", (tree.node[1].fragment, tree.node[1].typ), tree.node[1].lexlabel)] + recursive_actions
+        return push_actions + [Decision(relevant_position, True, "", (tree.node[1].fragment, tree.node[1].typ), tree.node[1].lexlabel)] + recursive_actions
 
     def get_order(self, sentence: AMSentence) -> Iterable[Decision]:
         t = Tree.from_am_sentence(sentence)
-        r = [Decision(t.node[0], t.node[1].label, ("", ""), "")] + self._construct_seq(t)
+        r = [Decision(t.node[0], False, t.node[1].label, ("", ""), "")] + self._construct_seq(t)
         return r
 
     def check_correct(self, gold_sentence : AMSentence, predicted : AMSentence) -> bool:
@@ -146,10 +146,9 @@ class DFSChildrenFirst(TransitionSystem):
 
         edge_labels = torch.argmax(scores["all_labels_scores"][state.stack.batch_range, selected_nodes], 1)
         constants = torch.argmax(scores["constants_scores"], 1)
-        lex_labels = scores["lex_labels"]  # torch.argmax(scores["lex_labels_scores"], 1)
-        term_types = torch.argmax(scores["term_types_scores"], 1)
+        lex_labels = scores["lex_labels"]
 
-        return DecisionBatch(selected_nodes, push_mask, pop_mask, edge_labels, constants, term_types, lex_labels, pop_mask)
+        return DecisionBatch(selected_nodes, push_mask, pop_mask, edge_labels, constants, None, lex_labels, pop_mask)
 
     def step(self, state: DFSChildrenFirstState, decision_batch: DecisionBatch) -> None:
         """
@@ -162,14 +161,18 @@ class DFSChildrenFirst(TransitionSystem):
         state.children.append(next_active_nodes, decision_batch.push_tokens, decision_batch.push_mask)
         range_batch_size = state.stack.batch_range
         inverse_push_mask = (1-decision_batch.push_mask.long())
+
         state.heads[range_batch_size, decision_batch.push_tokens] = inverse_push_mask*state.heads[range_batch_size, decision_batch.push_tokens] + decision_batch.push_mask * next_active_nodes
         state.edge_labels[range_batch_size, decision_batch.push_tokens] = inverse_push_mask*state.edge_labels[range_batch_size, decision_batch.push_tokens] + decision_batch.push_mask * decision_batch.edge_labels
+
         inverse_constant_mask = (1-decision_batch.constant_mask.long())
         state.constants[range_batch_size, next_active_nodes] = inverse_constant_mask * state.constants[range_batch_size, next_active_nodes] + decision_batch.constant_mask * decision_batch.constants
         state.lex_labels[range_batch_size, next_active_nodes] = inverse_constant_mask*state.lex_labels[range_batch_size, next_active_nodes] + decision_batch.constant_mask * decision_batch.lex_labels
 
         pop_mask = decision_batch.pop_mask #shape (batch_size,)
-        push_all_children_mask = state.children.lol[range_batch_size, next_active_nodes]
-        state.stack.push(decision_batch.push_tokens, decision_batch.push_mask)
-        state.stack.pop_wo_peek(decision_batch.pop_mask)
+        active_children = state.children.lol[range_batch_size, next_active_nodes] #shape (batch_size, max. number of children)
+        push_all_children_mask = (active_children != 0).long() #shape (batch_size, max. number of children)
+        push_all_children_mask *= pop_mask.unsqueeze(1) # only push those children where we will pop the current node from the top of the stack.
+
+        state.stack.pop_and_push_multiple(active_children, decision_batch.pop_mask, push_all_children_mask)
 

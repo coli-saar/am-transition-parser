@@ -62,14 +62,18 @@ class BatchedStack:
         self.pop_wo_peek(mask)
         return r
 
-    def push_multiple(self, elements, mask, reverse: Optional[bool] = False) -> None:
+    def pop_and_push_multiple(self, elements, pop_mask, push_mask, reverse: Optional[bool] = False) -> None:
         """
-        Pushes elements on stack
+        Pops Pushes elements on stack
         :param reverse:
         :param elements: Tensor of shape (batch_size, some_len)
         :param mask: Tensor of shape (batch_size, som_len)
         """
-        mask = mask.long()
+        self.stack_ptr -= pop_mask.long()
+        if torch.any(self.stack_ptr < 0):
+            raise ValueError("Stack empty")
+
+        mask = push_mask.long()
         neg_mask = 1 - mask
         if reverse:
             r = range(elements.shape[1])
@@ -82,3 +86,5 @@ class BatchedStack:
 
             self.stack_ptr += m
             self.stack[self.batch_range, self.stack_ptr] = neg_mask[:,i] * self.stack[self.batch_range, self.stack_ptr] +  m * vector
+
+        self.done_mask |= (self.stack_ptr == 0)
