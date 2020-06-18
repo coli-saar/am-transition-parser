@@ -66,15 +66,19 @@ class BatchedParsingState:
 
     def extract_trees(self) -> List[AMSentence]:
         r = []
+        heads = F.relu(self.heads[:, 1:]).cpu().numpy()
+        label_tensor = self.edge_labels[:, 1:].cpu().numpy()
+        constant_tensor = self.constants[:, 1:].cpu().numpy()
+        lex_label_tensor = self.lex_labels[:, 1:].cpu().numpy()
         for i in range(len(self.sentences)):
             length = len(self.sentences[i])
-            sentence = self.sentences[i].set_heads([max(0, h) for i, h in enumerate(self.heads[i,1:].cpu().numpy()) if i < length]) #negative heads are ignored, so point to 0.
-            edge_labels = [self.lexicon.get_str_repr("edge_labels", id) if id > 0 else "IGNORE" for i, id in enumerate(self.edge_labels[i,1:].cpu().numpy()) if i < length]
+            sentence = self.sentences[i].set_heads([max(0, h) for i, h in enumerate(heads[i]) if i < length]) #negative heads are ignored, so point to 0.
+            edge_labels = [self.lexicon.get_str_repr("edge_labels", id) if id > 0 else "IGNORE" for i, id in enumerate(label_tensor[i]) if i < length]
             sentence = sentence.set_labels(edge_labels)
             constants = [AMSentence.split_supertag(self.lexicon.get_str_repr("constants", id)) if id > 0 else AMSentence.split_supertag(AMSentence.get_bottom_supertag())
-                         for i, id in enumerate(self.constants[i,1:].cpu().numpy()) if i < length]
+                         for i, id in enumerate(constant_tensor[i]) if i < length]
             sentence = sentence.set_supertag_tuples(constants)
-            lex_labels = [self.lexicon.get_str_repr("lex_labels", id) if id > 0 else "_" for i, id in enumerate(self.lex_labels[i,1:].cpu().numpy()) if i < length]
+            lex_labels = [self.lexicon.get_str_repr("lex_labels", id) if id > 0 else "_" for i, id in enumerate(lex_label_tensor[i]) if i < length]
             sentence = sentence.set_lexlabels(lex_labels)
             r.append(sentence)
         return r
