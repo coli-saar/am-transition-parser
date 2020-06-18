@@ -56,3 +56,6 @@ class AdditionalLexicon(Registrable):
 
     def vocab_size(self, sublexicon : str) -> int:
         return self.sublexica[sublexicon].vocab_size()
+
+
+AdditionalLexicon.register("default")(AdditionalLexicon)

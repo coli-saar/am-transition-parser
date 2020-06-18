@@ -2,9 +2,8 @@ import argparse
 import json
 from typing import Dict, List
 
-from allennlp.common.util import prepare_environment, import_submodules
+from allennlp.common.util import prepare_environment, import_module_and_submodules
 from allennlp.models import load_archive
-from allenpipeline import PipelineTrainerPieces
 from allenpipeline.callback import CallbackName
 
 
@@ -13,7 +12,7 @@ from allenpipeline.callback import CallbackName
 
 
 if __name__ == "__main__":
-    import_submodules("topdown_parser")
+    import_module_and_submodules("topdown_parser")
     from topdown_parser.dataset_readers.amconll_tools import parse_amconll
 
     optparser = argparse.ArgumentParser(add_help=True,

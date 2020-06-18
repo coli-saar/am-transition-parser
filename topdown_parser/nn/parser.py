@@ -322,7 +322,7 @@ class TopDownDependencyParser(Model):
 
         encoded_text = self._encoder_output_dropout(encoded_text)
 
-        mask = torch.cat([torch.ones((batch_size, 1), dtype=torch.long, device=get_device_id(encoded_text)), mask],
+        mask = torch.cat([torch.ones((batch_size, 1), dtype=torch.long, device=get_device_id(encoded_text)), mask.long()],
                          dim=1)
         assert mask.shape == (batch_size, seq_len + 1)
 

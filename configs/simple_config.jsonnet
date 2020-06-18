@@ -1,5 +1,5 @@
 
-local num_epochs = 10;
+local num_epochs = 100;
 local device = 0;
 
 local word_dim = 128;
@@ -18,11 +18,16 @@ local dropout_in = 0.33;
 local eval_commands = import "eval_commands.libsonnet";
 
 local additional_lexicon = {
+     "type" : "default",
      "sublexica" : {
-            "edge_labels" : "data/AMR/2015/train/edges.txt",
-            "constants" : "data/AMR/2015/train/constants.txt",
-            "term_types" : "data/AMR/2015/train/types.txt",
-            "lex_labels" : "data/AMR/2015/train/lex_labels.txt"
+//            "edge_labels" : "data/AMR/2015/train/edges.txt",
+//            "constants" : "data/AMR/2015/train/constants.txt",
+//            "term_types" : "data/AMR/2015/train/types.txt",
+//            "lex_labels" : "data/AMR/2015/train/lex_labels.txt"
+                         "edge_labels" : "data/AMR/2015/lexicon/edges.txt",
+                        "constants" : "data/AMR/2015/lexicon/constants.txt",
+                        "term_types" : "data/AMR/2015/lexicon/types.txt",
+                        "lex_labels" : "data/AMR/2015/lexicon/lex_labels.txt"
      }
 } ;
 
@@ -39,7 +44,11 @@ local transition_system = {
 local dataset_reader = {
                "type": "amconll",
                "transition_system" : transition_system,
-               "workers" : 4,
+               "workers" : 1,
+               "run_oracle" : true,
+               "fuzz" : false,
+              "fuzz_beam_search" : false,
+              "use_tqdm" : true,
                "overwrite_formalism" : "amr",
                "token_indexers" : {
                     "tokens" : {
@@ -56,9 +65,11 @@ local dataset_reader = {
            };
 
 local data_iterator = {
-        "type": "same_formalism",
-        "batch_size": 16,
-       "formalisms" : ["amr"]
+        "batch_sampler" : {
+            "type": "bucket",
+            "batch_size": 16,
+            "sorting_keys" : ["words"]
+        }
     };
 
 
@@ -82,16 +93,18 @@ local data_iterator = {
 
 
 
-    "iterator": data_iterator,
+    "data_loader": data_iterator,
     "model": {
         "type": "topdown",
         "transition_system" : transition_system,
+
+//        "k_best" : 1,
 
         "input_dropout" : dropout_in,
         "encoder_output_dropout" : 0.2,
 
         "context_provider" : {
-            "type" : "sum",
+            "type" : "plain-concat",
             "providers" : [
 //                  {"type" : "type-embedder", "hidden_dim" : 2*encoder_dim, "additional_lexicon" : additional_lexicon },
 //                                { "type" : "last-label-embedder",
@@ -99,6 +112,7 @@ local data_iterator = {
 //                                "hidden_dim" : 2*encoder_dim
 //                                "dropout" : 0.2
 //                                },
+                  {"type" : "parent" },
                   {"type" : "most-recent-child" }
             ]
         },
@@ -139,18 +153,18 @@ local data_iterator = {
             }
         },
 
-//        "term_type_tagger" : {
-//            "type" : "combined-tagger",
-//            "lexicon" : additional_lexicon,
-//            "namespace" : "term_types",
-//            "mlp" : {
-//                "input_dim" : 2*2*encoder_dim,
-//                "num_layers" : 1,
-//                "hidden_dims" : 1024,
-//                "dropout" : 0.0,
-//                "activations" : "tanh",
-//            }
-//        },
+        "term_type_tagger" : {
+            "type" : "combined-tagger",
+            "lexicon" : additional_lexicon,
+            "namespace" : "term_types",
+            "mlp" : {
+                "input_dim" : 2*2*encoder_dim,
+                "num_layers" : 1,
+                "hidden_dims" : 1024,
+                "dropout" : 0.0,
+                "activations" : "tanh",
+            }
+        },
 
         "encoder" : {
             "type" : "lstm",
@@ -175,28 +189,30 @@ local data_iterator = {
 
         "decoder" : {
             "type" : "ma-lstm",
-            "input_dim": 2*encoder_dim,
+            "input_dim": 3*2*encoder_dim,
             "hidden_dim" : 2*encoder_dim,
             "input_dropout" : 0.2,
             "recurrent_dropout" : 0.1
         },
         "text_field_embedder": {
-               "tokens": {
-                    "type": "embedding",
-                    "embedding_dim": word_dim
-                },
-            "token_characters": {
-              "type": "character_encoding",
-                  "embedding": {
-                    "embedding_dim": char_dim
-                  },
-                  "encoder": {
-                    "type": "cnn",
-                    "embedding_dim": char_dim,
-                    "num_filters": num_filters,
-                    "ngram_filter_sizes": filters
-                  },
-              "dropout": dropout_in
+              "token_embedders": {
+                   "tokens": {
+                        "type": "embedding",
+                        "embedding_dim": word_dim
+                    },
+                "token_characters": {
+                  "type": "character_encoding",
+                      "embedding": {
+                        "embedding_dim": char_dim
+                      },
+                      "encoder": {
+                        "type": "cnn",
+                        "embedding_dim": char_dim,
+                        "num_filters": num_filters,
+                        "ngram_filter_sizes": filters
+                      },
+                  "dropout": dropout_in
+                }
             }
         },
         "edge_model" : {
@@ -242,20 +258,23 @@ local data_iterator = {
         }
 
     },
-    "train_data_path": "data/AMR/2015/train/small.amconll",
-    "validation_data_path": "data/AMR/2015/gold-dev/gold-dev.amconll",
+    "train_data_path": "data/AMR/2015/train/tiny.amconll",
+    "validation_data_path": "data/AMR/2015/train/tiny.amconll",
 
     "evaluate_on_test" : false,
 
     "trainer": {
+        "type" : "pipeline",
         "num_epochs": num_epochs,
         "cuda_device": device,
         "optimizer": {
             "type": "adam",
             "betas" : [0.9, 0.9]
         },
-        "num_serialized_models_to_keep" : 1,
-        "epochs_before_validate" : 2,
+        "checkpointer" : {
+             "num_serialized_models_to_keep" : 1,
+        },
+        "epochs_before_validate" : 0,
         "validation_metric" : "+LAS"
     },
 
@@ -264,8 +283,9 @@ local data_iterator = {
     },
 
     "annotator" : {
+        "type" : "default",
         "dataset_reader": dataset_reader,
-        "data_iterator": data_iterator,
+        "data_loader": data_iterator,
         "dataset_writer":{
               "type":"amconll_writer"
         }

@@ -4,17 +4,16 @@ import time
 from typing import List, Dict, Any
 
 import torch
-from allennlp.common.util import prepare_environment, import_submodules
+from allennlp.common.util import prepare_environment, import_module_and_submodules
 from allennlp.data import Instance
 from allennlp.models import load_archive
-from allenpipeline import Annotator, OrderedDatasetReader, PipelineTrainerPieces
+from allenpipeline import Annotator, OrderedDatasetReader
 from allenpipeline.Decoder import split_up
 import allennlp.nn.util as util
 
 
 if __name__ == "__main__":
-    import_submodules("topdown_parser")
-    from topdown_parser.dataset_readers.same_formalism_iterator import SameFormalismIterator
+    import_module_and_submodules("topdown_parser")
 
     optparser = argparse.ArgumentParser(add_help=True,
                                         description="Count trainable parameters.")

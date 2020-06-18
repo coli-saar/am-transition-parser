@@ -2,11 +2,10 @@ import argparse
 import json
 import sys
 
-from allennlp.common.util import prepare_environment, import_submodules
+from allennlp.common.util import prepare_environment, import_module_and_submodules
 from allennlp.models import load_archive
-from allenpipeline import PipelineTrainerPieces
-from allenpipeline.callback import CallbackName
-
+from allenpipeline import Annotator
+from allenpipeline.callback import CallbackName, Callbacks, Callback
 
 # Example:
 # python topdown_parser/dev_well_typed.py models/my_model --batch_size 32 --beams 1 2 3
@@ -14,8 +13,7 @@ from allenpipeline.callback import CallbackName
 
 
 if __name__ == "__main__":
-    import_submodules("topdown_parser")
-    from topdown_parser.dataset_readers.same_formalism_iterator import SameFormalismIterator
+    import_module_and_submodules("topdown_parser")
     from topdown_parser.nn.parser import TopDownDependencyParser
     from topdown_parser.callbacks.parse_dev import ParseDev
     from topdown_parser.dataset_readers.amconll_tools import parse_amconll
@@ -46,16 +44,12 @@ if __name__ == "__main__":
     prepare_environment(config)
     model = archive.model
     model.eval()
-    pipelinepieces = PipelineTrainerPieces.from_params(config)
+    annotator = Annotator.from_params(config["annotator"])
 
-    if args.batch_size is not None and args.batch_size > 0:
-        assert isinstance(pipelinepieces.annotator.data_iterator, SameFormalismIterator)
-        iterator : SameFormalismIterator = pipelinepieces.annotator.data_iterator
-        pipelinepieces.annotator.data_iterator = SameFormalismIterator(iterator.formalisms, args.batch_size)
+    callbacks = Callbacks.from_params(config["trainer"]["external_callbacks"])
 
-    annotator = pipelinepieces.annotator
-
-    parse_dev : ParseDev = pipelinepieces.callbacks.callbacks[CallbackName.AFTER_VALIDATION.value]
+    parse_dev : Callback = callbacks.callbacks[CallbackName.AFTER_VALIDATION.value]
+    parse_dev : ParseDev
     metrics = dict()
 
     model : TopDownDependencyParser = model
@@ -76,7 +70,7 @@ if __name__ == "__main__":
         model.k_best = beam_size
 
         filename = args.archive_file+f"/dev_well_typedness_k_{beam_size}.txt"
-        annotator.annotate_file(model, parse_dev.system_input, filename)
+        annotator.annotate_file(model, parse_dev.system_input, filename, batch_size=args.batch_size)
         cumulated_parse_time = 0.0
         well_typed = 0
         total = 0

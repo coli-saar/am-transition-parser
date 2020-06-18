@@ -4,17 +4,16 @@ import time
 from typing import List, Dict, Any
 
 import torch
-from allennlp.common.util import prepare_environment, import_submodules
+from allennlp.common.util import prepare_environment, import_module_and_submodules
 from allennlp.data import Instance
 from allennlp.models import load_archive
-from allenpipeline import Annotator, OrderedDatasetReader, PipelineTrainerPieces
+from allenpipeline import Annotator, OrderedDatasetReader
 from allenpipeline.Decoder import split_up
 import allennlp.nn.util as util
 
 
 if __name__ == "__main__":
-    import_submodules("topdown_parser")
-    from topdown_parser.dataset_readers.same_formalism_iterator import SameFormalismIterator
+    import_module_and_submodules("topdown_parser")
 
     optparser = argparse.ArgumentParser(add_help=True,
                                         description="Parse an amconll file (no annotions) with beam search.")
@@ -39,15 +38,10 @@ if __name__ == "__main__":
     model.eval()
     model.k_best = args.beam
 
-    pipelinepieces = PipelineTrainerPieces.from_params(config)
-
-    if args.batch_size is not None and args.batch_size > 0:
-        assert isinstance(pipelinepieces.annotator.data_iterator, SameFormalismIterator)
-        iterator : SameFormalismIterator = pipelinepieces.annotator.data_iterator
-        pipelinepieces.annotator.data_iterator = SameFormalismIterator(iterator.formalisms, args.batch_size)
+    annotator = Annotator.from_params(config["annotator"])
 
     t0 = time.time()
-    pipelinepieces.annotator.annotate_file(model, args.input_file, args.output_file)
+    annotator.annotate_file(model, args.input_file, args.output_file, batch_size=args.batch_size)
     t1 = time.time()
     print("Prediction took", t1-t0, "seconds")
 
