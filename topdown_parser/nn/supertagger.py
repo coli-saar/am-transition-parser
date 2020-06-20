@@ -3,12 +3,12 @@ from allennlp.common import Registrable
 from allennlp.data import Vocabulary
 from allennlp.models import Model
 from allennlp.modules import FeedForward
-from allennlp.nn.util import get_range_vector
 from torch import nn
 from torch.nn import Module
 
 from topdown_parser.dataset_readers.AdditionalLexicon import AdditionalLexicon
 from topdown_parser.nn.utils import get_device_id
+from topdown_parser.nn.utils import get_range_vector
 
 
 class Supertagger(Model):

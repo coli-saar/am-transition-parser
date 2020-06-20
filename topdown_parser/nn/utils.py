@@ -55,3 +55,16 @@ def batch_and_pad_tensor_dict(tensor_dicts : List[Dict[str, torch.Tensor]]) -> D
 def expand_tensor_dict(td : Dict[str, torch.Tensor]) -> List[Dict[str, torch.Tensor]]:
     batch_size = next(iter(td.values())).shape[0]
     return [index_tensor_dict(td, i) for i in range(batch_size)]
+
+
+def get_range_vector(size: int, device: int) -> torch.Tensor:
+    """
+    Returns a range vector with the desired size, starting at 0. The CUDA implementation
+    is meant to avoid copy data from CPU to GPU.
+
+    From AllenNLP
+    """
+    if device is not None and device > -1:
+        return torch.cuda.LongTensor(size, device=device).fill_(1).cumsum(0) - 1
+    else:
+        return torch.arange(0, size, dtype=torch.long)

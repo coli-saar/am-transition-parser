@@ -8,9 +8,10 @@ from allennlp.common.checks import ConfigurationError
 from allennlp.data import Vocabulary
 from allennlp.models import Model
 from allennlp.modules import TextFieldEmbedder, Embedding, Seq2SeqEncoder, InputVariationalDropout
-from allennlp.nn.util import get_text_field_mask, get_final_encoder_states, get_range_vector, batch_tensor_dicts
+from allennlp.nn.util import get_text_field_mask, get_final_encoder_states, batch_tensor_dicts
 
 from topdown_parser.dataset_readers.amconll_tools import AMSentence
+from topdown_parser.nn.utils import get_range_vector
 from topdown_parser.am_algebra.tools import is_welltyped, get_tree_type
 from topdown_parser.losses.losses import EdgeExistenceLoss
 from topdown_parser.nn import dm_edge_loss
