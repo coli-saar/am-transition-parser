@@ -53,9 +53,11 @@ local dataset_reader = {
            };
 
 local data_iterator = {
-        "type": "same_formalism",
-        "batch_size": batch_size,
-       "formalisms" : [task]
+        "batch_sampler" : {
+            "type": "bucket",
+            "batch_size": batch_size,
+            "sorting_keys" : ["words"]
+        }
     };
 
 
@@ -71,7 +73,7 @@ local data_iterator = {
 
     "validation_command" : eval_commands["general_validation"],
 
-    "iterator": data_iterator,
+    "data_loader": data_iterator,
     "model": {
         "type": "topdown",
         "transition_system" : transition_system,
@@ -141,23 +143,26 @@ local data_iterator = {
             "recurrent_dropout" : 0.33
         },
         "text_field_embedder": {
-               "tokens": {
-                    "type": "embedding",
-                    "embedding_dim": word_dim,
-                    "pretrained_file": glove_dir+"glove.6B.200d.txt"
-                },
-                "token_characters": {
-                  "type": "character_encoding",
-                      "embedding": {
-                        "embedding_dim": char_dim
-                      },
-                      "encoder": {
-                        "type": "cnn",
-                        "embedding_dim": char_dim,
-                        "num_filters": num_filters,
-                        "ngram_filter_sizes": filters
-                      }
-                }
+        "token_embedders": {
+                   "tokens": {
+                        "type": "embedding",
+                        "embedding_dim": word_dim,
+                        "pretrained_file": glove_dir+"glove.6B.200d.txt"
+                    },
+                    "token_characters": {
+                      "type": "character_encoding",
+                          "embedding": {
+                            "embedding_dim": char_dim,
+                             "vocab_namespace": "token_characters"
+                          },
+                          "encoder": {
+                            "type": "cnn",
+                            "embedding_dim": char_dim,
+                            "num_filters": num_filters,
+                            "ngram_filter_sizes": filters
+                          }
+                    }
+          }
         },
 
         "edge_model" : {
@@ -209,14 +214,19 @@ local data_iterator = {
     "evaluate_on_test" : false,
 
     "trainer": {
+        "type": "pipeline",
         "num_epochs": num_epochs,
         "cuda_device": device,
         "optimizer": {
             "type": "adam",
             "betas" : [0.9, 0.9]
         },
+        "checkpointer" : {
         "num_serialized_models_to_keep" : 1,
-        "validation_metric" : eval_commands["validation_metric"][task]
+        },
+        "validation_metric" : eval_commands["validation_metric"][task],
+
+        "external_callbacks" : eval_commands[task]
     },
 
     "dataset_writer":{
@@ -224,12 +234,12 @@ local data_iterator = {
     },
 
     "annotator" : {
+        "type": "default",
         "dataset_reader": dataset_reader,
-        "data_iterator": data_iterator,
+        "data_loader": data_iterator,
         "dataset_writer":{
               "type":"amconll_writer"
         }
     },
 
-    "callbacks" : eval_commands[task]
 }

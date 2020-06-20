@@ -13,6 +13,7 @@ local filters = [3];
 local max_filter = 3; //KEEP IN SYNC WITH filters!
 
 local bert_model = "bert-large-uncased";
+local transformer_output_dim = 1024;
 
 local lemma_embedding = 64;
 
@@ -37,12 +38,14 @@ local dataset_reader = {
                "type": "amconll",
                "transition_system" : transition_system,
                "workers" : 8,
+               "run_oracle" : true,
                "overwrite_formalism" : task,
 
               "token_indexers" : {
                     "bert": {
-                      "type": "bert-pretrained",
-                      "pretrained_model": bert_model,
+                      "type": "pretrained_transformer_mismatched",
+                      "model_name": bert_model,
+                      "namespace" : "bert_tags"
                     },
                    "token_characters" : {
                        "type" : "characters",
@@ -53,9 +56,11 @@ local dataset_reader = {
            };
 
 local data_iterator = {
-        "type": "same_formalism",
-        "batch_size": batch_size,
-       "formalisms" : [task]
+        "batch_sampler" : {
+            "type": "bucket",
+            "batch_size": batch_size,
+            "sorting_keys" : ["words"]
+        }
     };
 
 
@@ -71,7 +76,7 @@ local data_iterator = {
 
     "validation_command" : eval_commands["general_validation"],
 
-    "iterator": data_iterator,
+    "data_loader": data_iterator,
     "model": {
         "type": "topdown",
         "transition_system" : transition_system,
@@ -117,7 +122,7 @@ local data_iterator = {
 
         "encoder" : {
              "type": "stacked_bidirectional_lstm",
-            "input_size": num_filters + 1024 + pos_embedding + ne_embedding + lemma_embedding,
+            "input_size": num_filters + transformer_output_dim + pos_embedding + ne_embedding + lemma_embedding,
             "hidden_size": encoder_dim,
             "num_layers" : 3,
             "recurrent_dropout_probability" : 0.33,
@@ -126,7 +131,7 @@ local data_iterator = {
 
         "tagger_encoder" : {
              "type": "stacked_bidirectional_lstm",
-            "input_size": num_filters + 1024 + pos_embedding + ne_embedding + lemma_embedding,
+            "input_size": num_filters + transformer_output_dim + pos_embedding + ne_embedding + lemma_embedding,
             "hidden_size": encoder_dim,
             "num_layers" : 1,
             "recurrent_dropout_probability" : 0.33,
@@ -142,18 +147,17 @@ local data_iterator = {
         },
            "text_field_embedder": {
                "type": "basic",
-               "allow_unmatched_keys" : true,
-               "embedder_to_indexer_map": {
-                   "bert": ["bert", "bert-offsets"], "token_characters" : ["token_characters"] },
                "token_embedders": {
                    "bert" : {
-                       "type": "bert-pretrained",
-                           "pretrained_model" : bert_model,
+                       "type": "scalar_mix_pretrained_transformer_mismatched",
+                        "model_name" : bert_model,
+                        "train_parameters" : false,
                        },
                 "token_characters": {
                      "type": "character_encoding",
                          "embedding": {
-                           "embedding_dim": char_dim
+                           "embedding_dim": char_dim,
+                           "vocab_namespace": "token_characters",
                          },
                          "encoder": {
                            "type": "cnn",
@@ -213,28 +217,33 @@ local data_iterator = {
 
     "evaluate_on_test" : false,
 
-    "trainer": {
-        "num_epochs": num_epochs,
-        "cuda_device": device,
-        "optimizer": {
-            "type": "adam",
-            "betas" : [0.9, 0.9]
-        },
-        "num_serialized_models_to_keep" : 1,
-        "validation_metric" : eval_commands["validation_metric"][task]
-    },
+       "trainer": {
+           "type": "pipeline",
+           "num_epochs": num_epochs,
+           "cuda_device": device,
+           "optimizer": {
+               "type": "adam",
+               "betas" : [0.9, 0.9]
+           },
+           "checkpointer" : {
+           "num_serialized_models_to_keep" : 1,
+           },
+           "validation_metric" : eval_commands["validation_metric"][task],
 
-    "dataset_writer":{
-      "type":"amconll_writer"
-    },
+           "external_callbacks" : eval_commands[task]
+       },
 
-    "annotator" : {
-        "dataset_reader": dataset_reader,
-        "data_iterator": data_iterator,
-        "dataset_writer":{
-              "type":"amconll_writer"
-        }
-    },
+       "dataset_writer":{
+         "type":"amconll_writer"
+       },
 
-    "callbacks" : eval_commands[task]
+       "annotator" : {
+           "type": "default",
+           "dataset_reader": dataset_reader,
+           "data_loader": data_iterator,
+           "dataset_writer":{
+                 "type":"amconll_writer"
+           }
+       }
+
 }
