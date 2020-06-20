@@ -16,6 +16,7 @@ from allennlp.data.instance import Instance
 from allennlp.data.token_indexers import SingleIdTokenIndexer, TokenIndexer
 from allennlp.data.tokenizers import Token
 
+from .AdditionalLexicon import AdditionalLexicon
 from .ContextField import ContextField
 from .amconll_tools import parse_amconll, AMSentence
 from ..am_algebra.tools import is_welltyped
@@ -27,109 +28,22 @@ from tqdm import tqdm
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
 
 
-@DatasetReader.register("amconll")
-class AMConllDatasetReader(OrderedDatasetReader):
-    """
-    Reads a file in amconll format containing AM dependency trees.
 
-    Parameters
-    ----------
-    token_indexers : ``Dict[str, TokenIndexer]``, optional (default=``{"tokens": SingleIdTokenIndexer()}``)
-        The token indexers to be applied to the words TextField.
-    """
+class SentenceToInstanceHelper:
 
-    def __init__(self,
-                 transition_system: TransitionSystem,
-                 token_indexers: Dict[str, TokenIndexer] = None,
-                 lazy: bool = False, fraction: float = 1.0,
-                 overwrite_formalism : str = None,
-                 workers : int = 1,
-                 run_oracle : bool = True,
-                 fuzz: bool = False,
-                 fuzz_beam_search : bool = False,
-                 use_tqdm : bool = False,
-                 only_read_fraction_if_train_in_filename: bool = False) -> None:
-        super().__init__(lazy)
-        self.use_tqdm = use_tqdm
+    def __init__(self, transition_system : TransitionSystem, lexicon: AdditionalLexicon,
+                               run_oracle : bool, fuzz : bool, fuzz_beam_search : bool) -> None:
         self.fuzz_beam_search = fuzz_beam_search
-        self.fuzz = fuzz
+        self.transition_system = transition_system
+        self.lexicon = lexicon
         self.run_oracle = run_oracle
-        self.workers = workers
-        self.overwrite_formalism = overwrite_formalism
-        self.transition_system: TransitionSystem = transition_system
-        self._token_indexers = token_indexers or {'tokens': SingleIdTokenIndexer()}
-        self.fraction = fraction
-        self.only_read_fraction_if_train_in_filename = only_read_fraction_if_train_in_filename
-        self.lexicon = transition_system.additional_lexicon
+        self.fuzz = fuzz
 
-    def collect_sentences(self, file_path : str) -> List[AMSentence]:
-        file_path = cached_path(file_path)
-        if self.fraction < 0.9999 and (not self.only_read_fraction_if_train_in_filename or (
-                self.only_read_fraction_if_train_in_filename and "train" in file_path)):
-            with open(file_path, 'r') as amconll_file:
-                logger.info("Reading a fraction of " + str(
-                    self.fraction) + " of the AM dependency trees from amconll dataset at: %s", file_path)
-                sents = list(parse_amconll(amconll_file))
-                return sents[:int(len(sents)*self.fraction)]
-        else:
-            with open(file_path, 'r') as amconll_file:
-                logger.info("Reading AM dependency trees from amconll dataset at: %s", file_path)
-                return list(parse_amconll(amconll_file))
-
-    def read_file(self, file_path: str) -> Iterable[Instance]:
-        # if `file_path` is a URL, redirect to the cache
-        sents : List[AMSentence] = self.collect_sentences(file_path)
-        t1 = time.time()
-        if self.workers < 2: #or self.workers >= len(sents):
-            #import cProfile
-            #with cProfile.Profile() as pr:
-            if self.use_tqdm:
-                sents = tqdm(sents)
-            r = [self.text_to_instance(s) for s in sents]
-            #pr.print_stats()
-        else:
-            with mp.Pool(self.workers) as pool:
-                r = pool.map(self.text_to_instance, sents)
-        delta = time.time() - t1
-        logger.info(f"Reading took {round(delta,3)} seconds")
-        return [x for x in r if x is not None]
-
-    @overrides
-    def text_to_instance(self,  # type: ignore
-                         am_sentence: AMSentence) -> Optional[Instance]:
-        # pylint: disable=arguments-differ
-        """
-        Parameters
-        ----------
-        position_in_corpus : ``int``, required.
-            The index of this sentence in the corpus.
-        am_sentence : ``AMSentence``, required.
-            The words in the sentence to be encoded.
-
-        Returns
-        -------
-        An instance containing words, pos tags, dependency edge labels, head
-        indices, supertags and lexical labels as fields.
-        """
+    def sentence_to_field_dict(self, am_sentence : AMSentence) -> Optional[Dict[str, Field]]:
         fields: Dict[str, Field] = {}
 
-        if self.overwrite_formalism is not None:
-            formalism = self.overwrite_formalism
-        else:
-            formalism = am_sentence.attributes["framework"]
-
-        am_sentence = am_sentence.fix_dev_edge_labels()
-
-        tokens = TextField([Token(w) for w in am_sentence.get_tokens(shadow_art_root=True)], self._token_indexers)
-        fields["words"] = tokens
-        fields["pos_tags"] = SequenceLabelField(am_sentence.get_pos(), tokens, label_namespace="pos")
-        fields["ner_tags"] = SequenceLabelField(am_sentence.get_ner(), tokens, label_namespace="ner")
-        fields["lemmas"] = SequenceLabelField(am_sentence.get_lemmas(), tokens, label_namespace="lemmas")
-        fields["metadata"] = MetadataField({"formalism": formalism,
-                                            "am_sentence": am_sentence,
-                                            "is_annotated": am_sentence.is_annotated()})
         if not am_sentence.is_annotated():
-            return Instance(fields)
+            return fields
 
         #We are dealing with training data, prepare it accordingly.
 
@@ -252,15 +166,120 @@ class AMConllDatasetReader(OrderedDatasetReader):
 
         fields["supertag_mask"] = SequenceLabelField([int(decision.supertag[1] != "") for decision in decisions], seq)
 
-        fields["heads"] = SequenceLabelField(am_sentence.get_heads(), tokens)
-
         fields["context"] = ContextField(
             {name: ListField([ArrayField(array, dtype=array.dtype) for array in liste]) for name, liste in
              contexts.items()})
 
-        # fields["supertags"] = SequenceLabelField(am_sentence.get_supertags(), tokens, label_namespace=formalism+"_supertag_labels")
-        # fields["lexlabels"] = SequenceLabelField(am_sentence.get_lexlabels(), tokens, label_namespace=formalism+"_lex_labels")
-        # fields["head_tags"] = SequenceLabelField(am_sentence.get_edge_labels(),tokens, label_namespace=formalism+"_head_tags") #edge labels
-        # fields["head_indices"] = SequenceLabelField(am_sentence.get_heads(),tokens,label_namespace="head_index_tags")
+        return fields
+
+
+
+
+@DatasetReader.register("amconll")
+class AMConllDatasetReader(OrderedDatasetReader):
+    """
+    Reads a file in amconll format containing AM dependency trees.
+
+    Parameters
+    ----------
+    token_indexers : ``Dict[str, TokenIndexer]``, optional (default=``{"tokens": SingleIdTokenIndexer()}``)
+        The token indexers to be applied to the words TextField.
+    """
+
+    def __init__(self,
+                 transition_system: TransitionSystem,
+                 token_indexers: Dict[str, TokenIndexer] = None,
+                 lazy: bool = False, fraction: float = 1.0,
+                 overwrite_formalism : str = None,
+                 workers : int = 1,
+                 run_oracle : bool = True,
+                 fuzz: bool = False,
+                 fuzz_beam_search : bool = False,
+                 use_tqdm : bool = False,
+                 only_read_fraction_if_train_in_filename: bool = False) -> None:
+        super().__init__(lazy)
+        self.use_tqdm = use_tqdm
+        self.fuzz_beam_search = fuzz_beam_search
+        self.fuzz = fuzz
+        self.run_oracle = run_oracle
+        self.workers = workers
+        self.overwrite_formalism = overwrite_formalism
+        self.transition_system: TransitionSystem = transition_system
+        self._token_indexers = token_indexers or {'tokens': SingleIdTokenIndexer()}
+        self.fraction = fraction
+        self.only_read_fraction_if_train_in_filename = only_read_fraction_if_train_in_filename
+        self.lexicon = transition_system.additional_lexicon
+
+    def collect_sentences(self, file_path : str) -> List[AMSentence]:
+        file_path = cached_path(file_path)
+        if self.fraction < 0.9999 and (not self.only_read_fraction_if_train_in_filename or (
+                self.only_read_fraction_if_train_in_filename and "train" in file_path)):
+            with open(file_path, 'r') as amconll_file:
+                logger.info("Reading a fraction of " + str(
+                    self.fraction) + " of the AM dependency trees from amconll dataset at: %s", file_path)
+                sents = list(parse_amconll(amconll_file))
+                return sents[:int(len(sents)*self.fraction)]
+        else:
+            with open(file_path, 'r') as amconll_file:
+                logger.info("Reading AM dependency trees from amconll dataset at: %s", file_path)
+                return list(parse_amconll(amconll_file))
+
+    def read_file(self, file_path: str) -> Iterable[Instance]:
+        # if `file_path` is a URL, redirect to the cache
+        sents : List[AMSentence] = self.collect_sentences(file_path)
+        helper = SentenceToInstanceHelper(self.transition_system, self.lexicon, self.run_oracle, self.fuzz, self.fuzz_beam_search)
+        t1 = time.time()
+        if self.workers < 2: #or self.workers >= len(sents):
+            #import cProfile
+            #with cProfile.Profile() as pr:
+            if self.use_tqdm:
+                sents = tqdm(sents)
+            r = [helper.sentence_to_field_dict(s) for s in sents]
+            #pr.print_stats()
+        else:
+            with mp.Pool(self.workers) as pool:
+                r = pool.map(helper.sentence_to_field_dict, sents)
+
+        r = [self.text_to_instance(sent, x) for x,sent in zip(r, sents)]
+        delta = time.time() - t1
+        logger.info(f"Reading took {round(delta,3)} seconds")
+
+        return [x for x in r if x is not None]
+
+    @overrides
+    def text_to_instance(self,  # type: ignore
+                         am_sentence: AMSentence, fields: Optional[Dict[str, Field]]) -> Optional[Instance]:
+        # pylint: disable=arguments-differ
+        """
+        Parameters
+        ----------
+        position_in_corpus : ``int``, required.
+            The index of this sentence in the corpus.
+        am_sentence : ``AMSentence``, required.
+            The words in the sentence to be encoded.
+
+        Returns
+        -------
+        An instance containing words, pos tags, dependency edge labels, head
+        indices, supertags and lexical labels as fields.
+        """
+        if fields is None:
+            return None
+        if self.overwrite_formalism is not None:
+            formalism = self.overwrite_formalism
+        else:
+            formalism = am_sentence.attributes["framework"]
+
+        am_sentence = am_sentence.fix_dev_edge_labels()
+        tokens = TextField([Token(w) for w in am_sentence.get_tokens(shadow_art_root=True)], self._token_indexers)
+        fields["words"] = tokens
+        fields["pos_tags"] = SequenceLabelField(am_sentence.get_pos(), tokens, label_namespace="pos")
+        fields["ner_tags"] = SequenceLabelField(am_sentence.get_ner(), tokens, label_namespace="ner")
+        fields["lemmas"] = SequenceLabelField(am_sentence.get_lemmas(), tokens, label_namespace="lemmas")
+        fields["metadata"] = MetadataField({"formalism": formalism,
+                                            "am_sentence": am_sentence,
+                                            "is_annotated": am_sentence.is_annotated()})
+        fields["heads"] = SequenceLabelField(am_sentence.get_heads(), tokens)
 
         return Instance(fields)
+
