@@ -14,6 +14,7 @@ local SDP_regex = {
 } ;
 
 local sdp_evaluator(name) = {
+    "type" : "default",
     "callbacks" : {
         "after_validation" : {
             "type" : "parse-dev",
@@ -53,6 +54,7 @@ local sdp_evaluator(name) = {
 
 {
  "AMR-2015" : {
+    "type" : "default",
     "callbacks" : {
     "after_validation" : {
                  "type" : "parse-dev",
@@ -92,6 +94,7 @@ local sdp_evaluator(name) = {
 },
 
  "AMR-2017" : {
+    "type" : "default",
     "callbacks" : {
     "after_validation" : {
                  "type" : "parse-dev",
@@ -143,7 +146,8 @@ local sdp_evaluator(name) = {
 
 "DM" : sdp_evaluator("DM"),
 "PAS" : sdp_evaluator("PAS"),
-"PSD" :    { "callbacks" : {
+"PSD" :    {    "type" : "default",
+                "callbacks" : {
                 "after_validation" : {
                     "type" : "parse-dev",
                     "system_input" : SDP_prefix+"PSD/dev/dev.amconll",
@@ -178,6 +182,7 @@ local sdp_evaluator(name) = {
  } },
 
     "EDS" : { #don't use file extension for gold_file: use e.g. data/EDS/dev/dev-gold
+        "type" : "default",
         "callbacks" : {
         "after_validation" : {
                      "type" : "parse-dev",
