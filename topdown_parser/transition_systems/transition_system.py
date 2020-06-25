@@ -183,10 +183,7 @@ class TransitionSystem(Registrable):
              "lex_labels" : torch.randint(0, self.additional_lexicon.vocab_size("lex_labels"), (1,)),
                 "term_types_scores": term_type_scores, "lex_labels_scores" : lex_label_scores}
 
-        if beam_search:
-            r["all_labels_scores"] = torch.rand((1, len(sentence)+1, self.additional_lexicon.vocab_size("edge_labels")))
-        else:
-            r["edge_labels_scores"] = torch.rand(1, self.additional_lexicon.vocab_size("edge_labels"))
+        r["all_labels_scores"] = torch.rand((1, len(sentence)+1, self.additional_lexicon.vocab_size("edge_labels")))
 
         return r
 

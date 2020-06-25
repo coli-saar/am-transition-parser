@@ -318,7 +318,6 @@ class LTF(TransitionSystem):
         score = 0.0
         constant_scores = scores["constants_scores"].cpu().numpy()
         term_type_scores = scores["term_types_scores"].cpu().numpy()
-        label_scores = scores["edge_labels_scores"].cpu().numpy()
 
         selected_constant = ("","")
         selected_term_type = None
@@ -381,6 +380,8 @@ class LTF(TransitionSystem):
             return Decision(int(selected_node), "", selected_constant, selected_lex_label, selected_term_type, score=score)
 
         words_left_after_this = state.words_left - 1
+
+        label_scores = scores["all_labels_scores"][selected_node].cpu().numpy() #shape (edge vocab size)
 
         #Check if we want to do APP or MOD
         max_apply_score = -np.inf
