@@ -52,6 +52,7 @@ class LTLState(BatchedParsingState):
         self.lex_types = lex_types
         self.applyset = applyset
         self.step = 0
+        self.w_c = self.get_lengths().clone()
 
     def is_complete(self) -> torch.Tensor:
         return torch.all(self.stack.is_empty())
@@ -252,7 +253,7 @@ class LTL(TransitionSystem):
                                      torch.zeros(batch_size, max_len, device=device, dtype=torch.long)-1, #constants
                                      torch.zeros(batch_size, max_len, device=device, dtype=torch.long), #lex labels
                                      self.additional_lexicon,
-                                     torch.zeros(batch_size, max_len, device=device, dtype=torch.long), #lexical types
+                                     torch.zeros(batch_size, max_len, device=device, dtype=torch.long)-1, #lexical types
                                      torch.zeros((batch_size, max_len, len(self.i2source)), device=device, dtype=torch.bool), #apply set
                                      )
         # decoder_state: Any
@@ -274,6 +275,7 @@ class LTL(TransitionSystem):
         active_nodes = state.stack.peek()
         batch_range = state.stack.batch_range
         applyset = state.applyset[batch_range, active_nodes]
+        done = state.stack.get_done() #shape (batch_size,)
 
         if state.step < 2:
             if state.step == 0: # nothing done yet, have to determine root
@@ -315,7 +317,7 @@ class LTL(TransitionSystem):
         assert can_finish_now.shape == (batch_size, len(self.lextyp2i))
 
         # TEST, there always has to be at least one lexical type that is consistent with what we have done.
-        assert torch.sum(consistent_lex_types, dim=1) >= 1
+        assert (torch.sum(consistent_lex_types, dim=1) >= 1) | done
         # TEST
 
         # we can potentially close the current node
@@ -343,7 +345,7 @@ class LTL(TransitionSystem):
             pop_mask = torch.eq(selected_nodes, active_nodes)
 
         push_mask: torch.Tensor = (~pop_mask) * allowed_selection  # we push when we don't pop (but only if we are allowed to push)
-        not_done = ~state.stack.get_done()
+        not_done = ~done
         push_mask *= not_done  # we can only push if we are not done with the sentence yet.
         pop_mask *= allowed_selection
         pop_mask *= not_done
@@ -374,10 +376,9 @@ class LTL(TransitionSystem):
 
         #  we can use the fact that when the set of term types has the smallest apply set n and the largest apply set m, for all n <= i <= m, there is an apply set of size i.
         o_c = torch.relu(minimal_apply_set_size - collected_apply_set_size)
-        w_c = state.lengths - (~parent_mask & state.position_mask().bool()).sum(dim=1) #shape (batch_size,)
-        mod_mask = w_c - o_c >= 1 #shape (batch_size,)
+        mod_mask = (state.w_c - o_c) >= 1 #shape (batch_size,)
 
-        consistent_with_remaining_words = (number_of_words_required - collected_apply_set_size.unsqueeze(1)) <= w_c.unsqueeze(1) #shape (batch_size, lexical type)
+        consistent_with_remaining_words = (number_of_words_required - collected_apply_set_size.unsqueeze(1)) <= state.w_c.unsqueeze(1) #shape (batch_size, lexical type)
         assert consistent_with_remaining_words.shape == (batch_size, len(self.i2lextyp))
 
         # TODO APP: all those APP_x such that, if we add x to our apply set
@@ -396,11 +397,12 @@ class LTL(TransitionSystem):
         edge_mask = index_OR(possible_app_sources.int(), self.app_source2label_id.int()) #shape (batch_size, edge labels)
 
         edge_mask[mod_mask, :] |= self.mod_tensor #for some positions, we can also use MOD
-
+        edge_mask[:, self.additional_lexicon.get_id("edge_labels", "ROOT")] = False
+        assert torch.all(torch.any(edge_mask, dim=1) | pop_mask | done) #always at least one edge label (or we pop anyway).
 
         edge_scores = self.add_missing_edge_scores(scores["all_labels_scores"][state.stack.batch_range, selected_nodes]) #shape (batch_size, edge labels)
 
-        edge_labels = torch.argmax(edge_scores - 10_000_000 * (1-edge_mask.float()), 1)
+        edge_labels = torch.argmax(edge_scores - 10_000_000 * (~edge_mask).float(), 1)
 
         lex_labels = scores["lex_labels"]
 
@@ -421,15 +423,17 @@ class LTL(TransitionSystem):
         range_batch_size = state.stack.batch_range
         inverse_push_mask = (1-decision_batch.push_mask.long())
 
+        state.w_c -= decision_batch.push_mask.int()
         state.heads[range_batch_size, decision_batch.push_tokens] = inverse_push_mask*state.heads[range_batch_size, decision_batch.push_tokens] + decision_batch.push_mask * next_active_nodes
         state.edge_labels[range_batch_size, decision_batch.push_tokens] = inverse_push_mask*state.edge_labels[range_batch_size, decision_batch.push_tokens] + decision_batch.push_mask * decision_batch.edge_labels
 
+        state.edge_labels_readable = [ [self.additional_lexicon.get_str_repr("edge_labels", e) for e in batch] for batch in state.edge_labels.numpy()]
         #Check if new edge labels are APP or MOD
         #if APP, add respective source to collected apply set.
         sources_used = self.label_id2appsource[decision_batch.edge_labels] #shape (batch_size,)
         app_mask = decision_batch.push_mask.bool() & (sources_used >= 0) #shape (batch_size,)
         state.applyset[range_batch_size, next_active_nodes, sources_used] = ~app_mask * state.applyset[range_batch_size, next_active_nodes, sources_used] + app_mask
-        a = state.applyset.numpy()
+        #a = state.applyset.numpy()
         # apply_set_for_debugging = []
         # for batch in state.applyset.numpy():
         #     a = set()

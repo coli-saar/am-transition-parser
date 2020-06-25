@@ -39,6 +39,11 @@ class BatchedParsingState:
         """
         return self.heads < 0
 
+    def get_lengths(self) -> torch.Tensor:
+        if not hasattr(self, "actual_lengths"):
+            self.actual_lengths = torch.tensor([len(s) for s in self.sentences], device=get_device_id(self.constants))
+        return self.actual_lengths
+
     def position_mask(self) -> torch.Tensor:
         """
         Which elements are actual words in the sentence?

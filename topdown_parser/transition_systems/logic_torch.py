@@ -44,8 +44,8 @@ def consistent_with_and_can_finish_now(batched_set: torch.BoolTensor, mapping: t
     minimal_apply_set_size: shape (batch_size, "lexical types")
 
     returns a tuple of bool tensors, both of shape (batch_size, "lexical types")
-    1.) R[b,l] = True iff \forall s, batchet_set[b,s] <-> mapping[b, s, l]
-    2.) R[b,l] = True iff \forall s, batchet_set[b,s] -> mapping[b, s, l] AND apply_set_exists[b,l]
+    1.) R_1[b,l] = True iff R_2[b,l] AND at sum_s[ (batched_set[b,s] AND mapping[b,s,l]) ] >= minimal_apply_set_size[b,l]
+    2.) R_2[b,l] = True iff \forall s, batched_set[b,s] -> mapping[b, s, l] AND apply_set_exists[b,l]
     """
     set_size = batched_set.sum(dim=1) #shape (batch_size,)
     #result = torch.einsum("bs, bsl -> bl", batched_set, mapping)
