@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import List, Iterable, Optional, Tuple, Dict, Any, Set
+from typing import List, Iterable, Optional, Tuple, Dict, Any, Set, Type
 
 import torch
 from allennlp.common import Registrable
@@ -43,7 +43,7 @@ class DecisionBatch:
                              torch.tensor([int(decision.pop)]),
                              torch.tensor([lexicon.get_id("edge_labels", decision.label)]),
                              torch.tensor([lexicon.get_id("constants", "--TYPE--".join(decision.supertag))]),
-                             torch.tensor([lexicon.get_id("lexical_types", str(decision.termtyp)) if decision.termtyp is not None else 0]),
+                             torch.tensor([lexicon.get_id("term_types", str(decision.termtyp)) if decision.termtyp is not None else 0]),
                              torch.tensor([lexicon.get_id("lex_labels", decision.lexlabel)]),
                              torch.tensor([decision.supertag != ("", "")])
                              )
@@ -64,6 +64,11 @@ class TransitionSystem(Registrable):
     def __init__(self, additional_lexicon : AdditionalLexicon):
         self.additional_lexicon = additional_lexicon
 
+    def get_decision_batch_type(self) -> Type:
+        return DecisionBatch
+
+    def guarantees_well_typedness(self) -> bool:
+        raise NotImplementedError()
 
     def validate_model(self, parser : "TopDownDependencyParser") -> None:
         """

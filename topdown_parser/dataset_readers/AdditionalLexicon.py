@@ -26,6 +26,17 @@ class Lexicon:
     def __iter__(self):
         return iter(self.s2i.items())
 
+    def add(self, entries: List[str]) -> None:
+        """
+        Add new entries to end of vocabulary.
+        :param entries:
+        :return:
+        """
+        n = self.vocab_size()
+        for i, e in enumerate(entries):
+            self.i2s.append(e)
+            self.s2i[e] = n+i
+
 
 
 class AdditionalLexicon(Registrable):

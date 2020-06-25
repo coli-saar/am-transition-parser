@@ -45,6 +45,9 @@ class DFSChildrenFirst(TransitionSystem):
 
         self.children_order = children_order
 
+    def guarantees_well_typedness(self) -> bool:
+        return False
+
     def _construct_seq(self, tree: Tree) -> List[Decision]:
         own_position = tree.node[0]
         push_actions = []

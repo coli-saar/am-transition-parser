@@ -33,6 +33,9 @@ class DFS(TransitionSystem):
 
         self.children_order = children_order
 
+    def guarantees_well_typedness(self) -> bool:
+        return False
+
     def _construct_seq(self, tree: Tree, is_first_child : bool, parent_type : Tuple[str, str], parent_lex_label : str) -> List[Decision]:
         own_position = tree.node[0]
         to_left = []

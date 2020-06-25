@@ -162,6 +162,7 @@ class AMConllDatasetReader(OrderedDatasetReader):
         #next_active = torch.tensor([0])
         # print(am_sentence)
         contexts = dict()
+        decision_batch_type = self.transition_system.get_decision_batch_type()
         for i in range(1, len(decisions)):
             #Gather context
             context = state.gather_context() #device: cpu
@@ -175,7 +176,7 @@ class AMConllDatasetReader(OrderedDatasetReader):
                 contexts[k].append(v.numpy())
             # print(i, next_active, decisions[i].position, self.transition_system.gather_context(next_active))
 
-            decision_batch = DecisionBatch.from_decision(decisions[i], self.lexicon)
+            decision_batch = decision_batch_type.from_decision(decisions[i], self.lexicon)
             self.transition_system.step(state, decision_batch)
 
             if state.is_complete():
@@ -214,7 +215,7 @@ class AMConllDatasetReader(OrderedDatasetReader):
                 self.transition_system.step(state, decision)
 
             assert state.is_complete()
-            #assert is_welltyped(state.extract_trees()[0])
+            assert self.transition_system.guarantees_well_typedness() or is_welltyped(state.extract_trees()[0])
             torch.random.set_rng_state(rng_state)
 
         if self.fuzz_beam_search:
@@ -229,7 +230,7 @@ class AMConllDatasetReader(OrderedDatasetReader):
                 self.transition_system.step(state, decision)
 
             assert state.is_complete()
-            #assert is_welltyped(state.extract_trees()[0])
+            assert self.transition_system.guarantees_well_typedness() or is_welltyped(state.extract_trees()[0])
             torch.random.set_rng_state(rng_state)
 
         ##################################################################

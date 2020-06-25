@@ -118,6 +118,9 @@ class LTF(TransitionSystem):
 
         self.read_cache = ReadCache()
 
+    def guarantees_well_typedness(self) -> bool:
+        return False
+
     def predict_supertag_from_tos(self) -> bool:
         return True
 
