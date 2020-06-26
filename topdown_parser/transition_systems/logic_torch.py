@@ -36,12 +36,14 @@ def batched_index_OR(batched_set : torch.BoolTensor, mapping : torch.BoolTensor)
 
 
 def consistent_with_and_can_finish_now(batched_set: torch.BoolTensor, mapping: torch.BoolTensor, apply_set_exists : torch.BoolTensor,
-                                       minimal_apply_set_size : torch.Tensor) -> Tuple[torch.BoolTensor, torch.BoolTensor]:
+                                       minimal_apply_set_size: torch.Tensor,
+                                       obligatory_apply_set: torch.Tensor) -> Tuple[torch.BoolTensor, torch.BoolTensor]:
     """
     batched_set : shape (batch_size, set capacity)
     mapping : shape (batch_size, set capacity, "lexical types")
     apply_set_exists : shape (batch_size, "lexical types")
     minimal_apply_set_size: shape (batch_size, "lexical types")
+    obligatory_apply_set: shape (batch_size, set capacity, "lexical types")
 
     returns a tuple of bool tensors, both of shape (batch_size, "lexical types")
     1.) R_1[b,l] = True iff R_2[b,l] AND at sum_s[ (batched_set[b,s] AND mapping[b,s,l]) ] >= minimal_apply_set_size[b,l]
@@ -50,14 +52,16 @@ def consistent_with_and_can_finish_now(batched_set: torch.BoolTensor, mapping: t
     set_size = batched_set.sum(dim=1) #shape (batch_size,)
     #result = torch.einsum("bs, bsl -> bl", batched_set, mapping)
     result = (torch.bmm(batched_set.unsqueeze(1), mapping)).squeeze(1) #shape (batch_size, "lexical types")
-    #s = mapping.sum(dim=1) #shape (batch_size, "lexical types",), contains the size of the apply set for each lexical type
+    r2 = (torch.bmm(batched_set.unsqueeze(1), obligatory_apply_set)).squeeze(1) #shape (batch_size, "lexical types")
+    #s = obligatory_apply_set.sum(dim=1) #shape (batch_size, "lexical types",), contains the size of the apply set for each lexical type
 
     consistent = are_eq(result, set_size.unsqueeze(1)) #shape (batch_size, "lexical types")
     # OK but does not take into account that not every pair of types is apply-reachable, so find lexical types that are apply reachable to our
     # set of term types
     consistent &= apply_set_exists
 
-    can_finish_now = consistent & (result >= minimal_apply_set_size)
+    #can_finish_now = consistent & (result >= minimal_apply_set_size)
+    can_finish_now = consistent & (r2 >= minimal_apply_set_size)
     #can_finish_now = consistent & are_eq(result, s)
 
     return can_finish_now, consistent

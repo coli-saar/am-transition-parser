@@ -97,6 +97,9 @@ class LTL(TransitionSystem):
         lexical2constant = np.zeros((len_lex_typ, self.additional_lexicon.vocab_size("constants")), dtype=np.bool) #shape (lexical type, constant)
         constant2lexical = np.zeros(self.additional_lexicon.vocab_size("constants"), dtype=np.long)
         apply_set_lookup = np.zeros((len_lex_typ, len_labels, len_lex_typ, len_sources), dtype=np.bool)
+        obligatory_apply_set_lookup = np.zeros((len_lex_typ, len_labels, len_sources, len_lex_typ), dtype=np.bool)
+        # (parent_lex, label, some lex type, s) is true iff for all applysets between the types, s is in the apply set (and there exists an apply set).
+
         apply_set_exists = np.zeros((len_lex_typ, len_labels, len_lex_typ), dtype=np.bool) #shape (parent lexical type, incoming label, lexical type)
 
         self.mod_cache = ModCache([AMType.parse_str(t) for t in all_lex_types])
@@ -132,39 +135,69 @@ class LTL(TransitionSystem):
                     applyset_size += 1
                     source_id = self.source2i[source]
                     apply_set_lookup[parent_id, root_id, current_typ_id, source_id] = True
+                    obligatory_apply_set_lookup[parent_id, root_id, source_id, current_typ_id] = True
 
                 minimal_apply_sets[parent_id, root_id, current_typ_id] = applyset_size
                 apply_set_exists[parent_id, root_id, current_typ_id] = True
 
             # MOD
             for source, t in self.mod_cache.get_modifiers(parent_lex_typ):
+                smallest_apply_set : Dict[Tuple[int, str], Set[str]] = dict()
                 if self.additional_lexicon.contains("edge_labels", "MOD_"+source):
                     label_id = self.additional_lexicon.get_id("edge_labels", "MOD_"+source)
+
                     for possible_lexical_type, applyset in apply_reachable_from[t]:
                         current_typ_id = self.lextyp2i[possible_lexical_type]
+
+                        if (current_typ_id, source) not in smallest_apply_set:
+                            smallest_apply_set[(current_typ_id, source) ] = applyset
+                        elif len(applyset) < len(smallest_apply_set[(current_typ_id, source) ]):
+                            smallest_apply_set[(current_typ_id, source)] = applyset
 
                         apply_set_exists[parent_id, label_id, current_typ_id] = True
                         for source in applyset:
                             source_id = self.source2i[source]
                             apply_set_lookup[parent_id, label_id, current_typ_id, source_id] = True
-                        minimal_apply_sets[parent_id, label_id, current_typ_id] = min(len(applyset), minimal_apply_sets[parent_id, label_id, current_typ_id])
+
+                        old_minimal_apply_set = minimal_apply_sets[parent_id, label_id, current_typ_id]
+                        if len(applyset) < old_minimal_apply_set:
+                            minimal_apply_sets[parent_id, label_id, current_typ_id] = len(applyset)
+                            obligatory_apply_set_lookup[parent_id, label_id, :, current_typ_id] = False
+                            for source in applyset:
+                                source_id = self.source2i[source]
+                                obligatory_apply_set_lookup[parent_id, label_id, source_id, current_typ_id] = True
+
             # APP
             for source in parent_lex_typ.nodes():
                 req = parent_lex_typ.get_request(source)
                 label_id = self.additional_lexicon.get_id("edge_labels", "APP_"+source)
+                smallest_apply_set : Dict[int, Set[str]] = dict()
                 for possible_lexical_type, applyset in apply_reachable_from[req]:
                     current_typ_id = self.lextyp2i[possible_lexical_type]
+
+                    if current_typ_id not in smallest_apply_set:
+                        smallest_apply_set[current_typ_id] = applyset
+                    elif len(applyset) < len(smallest_apply_set[current_typ_id]):
+                        smallest_apply_set[current_typ_id] = applyset
 
                     apply_set_exists[parent_id, label_id, current_typ_id] = True
                     for source in applyset:
                         source_id = self.source2i[source]
                         apply_set_lookup[parent_id, label_id, current_typ_id, source_id] = True
-                    minimal_apply_sets[parent_id, label_id, current_typ_id] = min(len(applyset), minimal_apply_sets[parent_id, label_id, current_typ_id])
+
+                    old_minimal_apply_set = minimal_apply_sets[parent_id, label_id, current_typ_id]
+                    if len(applyset) < old_minimal_apply_set:
+                        minimal_apply_sets[parent_id, label_id, current_typ_id] = len(applyset)
+                        obligatory_apply_set_lookup[parent_id, label_id, :, current_typ_id] = False
+                        for source in applyset:
+                            source_id = self.source2i[source]
+                            obligatory_apply_set_lookup[parent_id, label_id, source_id, current_typ_id] = True
 
         self.minimal_apply_sets = torch.from_numpy(minimal_apply_sets)
         self.lexical2constant = torch.from_numpy(lexical2constant).int()
         self.constant2lexical = torch.from_numpy(constant2lexical)
         self.apply_set_lookup = torch.from_numpy(apply_set_lookup) #TODO GPU, float
+        self.obligatory_apply_set_lookup = torch.from_numpy(obligatory_apply_set_lookup)
         self.apply_set_exists = torch.from_numpy(apply_set_exists)
         self.app_source2label_id = torch.zeros((len_sources, len_labels), dtype=torch.bool) # maps a source id to the respective (APP) label id
         self.mod_tensor = torch.zeros(len_labels, dtype=torch.bool) #which label ids are MOD_ edge labels?
@@ -180,7 +213,7 @@ class LTL(TransitionSystem):
             self.app_source2label_id[source_id, label_id] = True
 
     def guarantees_well_typedness(self) -> bool:
-        return False
+        return True
 
     def add_missing_edge_scores(self, edge_scores : torch.Tensor) -> torch.Tensor:
         """
@@ -309,11 +342,12 @@ class LTL(TransitionSystem):
         # to one of the term types that the current node can have.
         assert A.shape == (batch_size, len(self.lextyp2i), len(self.i2source))
         At = A.transpose(1, 2) #shape (batch_size, sources, lexical types)
+        obligatory_apply_set = self.obligatory_apply_set_lookup[lexical_type_parent, incoming_labels] #shape (batch_size, sources, lexical types)
 
         apply_set_exists = self.apply_set_exists[lexical_type_parent, incoming_labels] #shape (batch_size, lexical types, )
         minimal_apply_set_size = self.minimal_apply_sets[lexical_type_parent, incoming_labels] #shape (batch_size, lexical type,) with apply set size
 
-        can_finish_now, consistent_lex_types = consistent_with_and_can_finish_now(applyset.int(), At.int(), apply_set_exists, minimal_apply_set_size) #both have shape (batch_size, lexical types) and are bool tensors
+        can_finish_now, consistent_lex_types = consistent_with_and_can_finish_now(applyset.int(), At.int(), apply_set_exists, minimal_apply_set_size, obligatory_apply_set.int()) #both have shape (batch_size, lexical types) and are bool tensors
         assert can_finish_now.shape == (batch_size, len(self.lextyp2i))
 
         # TEST, there always has to be at least one lexical type that is consistent with what we have done.
