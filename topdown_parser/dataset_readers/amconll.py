@@ -18,7 +18,7 @@ from allennlp.data.tokenizers import Token
 
 from .ContextField import ContextField
 from .amconll_tools import parse_amconll, AMSentence
-from ..am_algebra.tools import is_welltyped
+from ..am_algebra.tools import is_welltyped, get_term_types
 from topdown_parser.transition_systems.transition_system import TransitionSystem, DecisionBatch
 from ..transition_systems.parsing_state import BatchedParsingState
 
@@ -206,22 +206,28 @@ class AMConllDatasetReader(OrderedDatasetReader):
             # Now fuzz
             rng_state = torch.random.get_rng_state()
             stripped_sentence = am_sentence.strip_annotation()
-            hash_value = len(am_sentence) + sum(self.lexicon.get_id("edge_labels", w.label) for w in am_sentence.words)
+            # print([w.token for w in am_sentence.words])
+            hash_value = len(am_sentence) + sum(len(w.token)*ord(w.token[0])*ord(w.token[-1]) for w in am_sentence.words)
+            # print(hash_value)
             torch.random.manual_seed(hash_value)
             state : BatchedParsingState = self.transition_system.initial_state([stripped_sentence], None)
-            for _ in range(2*len(stripped_sentence)+1):
+            for i in range(2*len(stripped_sentence)+1):
                 scores = self.transition_system.fuzz_scores(stripped_sentence, beam_search=False)
                 decision = self.transition_system.make_decision(scores, state)
                 self.transition_system.step(state, decision)
 
+            # print(state.extract_trees()[0])
+            # from topdown_parser.am_algebra.tree import Tree
+            # t = Tree.from_am_sentence(state.extract_trees()[0])
+            # print(get_term_types(t, state.extract_trees()[0]))
             assert state.is_complete()
-            assert self.transition_system.guarantees_well_typedness() or is_welltyped(state.extract_trees()[0])
+            assert (not self.transition_system.guarantees_well_typedness()) or is_welltyped(state.extract_trees()[0])
             torch.random.set_rng_state(rng_state)
 
         if self.fuzz_beam_search:
             rng_state = torch.random.get_rng_state()
             stripped_sentence = am_sentence.strip_annotation()
-            hash_value = len(am_sentence) + sum(self.lexicon.get_id("edge_labels", w.label) for w in am_sentence.words)
+            hash_value = len(am_sentence) + sum(len(w.token)*ord(w.token[0])*ord(w.token[-1]) for w in am_sentence.words)
             torch.random.manual_seed(hash_value)
             state : BatchedParsingState = self.transition_system.initial_state([stripped_sentence], None)
             for _ in range(2*len(stripped_sentence)+1):
@@ -230,7 +236,7 @@ class AMConllDatasetReader(OrderedDatasetReader):
                 self.transition_system.step(state, decision)
 
             assert state.is_complete()
-            assert self.transition_system.guarantees_well_typedness() or is_welltyped(state.extract_trees()[0])
+            assert (not self.transition_system.guarantees_well_typedness()) or is_welltyped(state.extract_trees()[0])
             torch.random.set_rng_state(rng_state)
 
         ##################################################################

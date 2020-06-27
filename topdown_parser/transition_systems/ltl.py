@@ -347,7 +347,7 @@ class LTL(TransitionSystem):
         apply_set_exists = self.apply_set_exists[lexical_type_parent, incoming_labels] #shape (batch_size, lexical types, )
         minimal_apply_set_size = self.minimal_apply_sets[lexical_type_parent, incoming_labels] #shape (batch_size, lexical type,) with apply set size
 
-        can_finish_now, consistent_lex_types = consistent_with_and_can_finish_now(applyset.int(), At.int(), apply_set_exists, minimal_apply_set_size, obligatory_apply_set.int()) #both have shape (batch_size, lexical types) and are bool tensors
+        can_finish_now, consistent_lex_types, obligatory_sources_collected = consistent_with_and_can_finish_now(applyset.int(), At.int(), apply_set_exists, minimal_apply_set_size, obligatory_apply_set.int()) #both have shape (batch_size, lexical types) and are bool tensors
         assert can_finish_now.shape == (batch_size, len(self.lextyp2i))
 
         # TEST, there always has to be at least one lexical type that is consistent with what we have done.
@@ -405,14 +405,18 @@ class LTL(TransitionSystem):
         # non-consistent lexical types have huge number, all consistent types have 0 associated with them.
 
         # Find minimal apply set size of taking into account the lexical types that are consistent with out collected apply set.
-        number_of_words_required = minimal_apply_set_size + non_consistent_lex_types #shape (batch_size, lexical type)
-        minimal_apply_set_size, _ = torch.min(number_of_words_required, dim=1) #shape (batch_size,)
+        number_of_words_still_required = minimal_apply_set_size - obligatory_sources_collected + non_consistent_lex_types #shape (batch_size, lexical type)
+        assert torch.all(number_of_words_still_required >= 0)
+        #number_of_words_required = obligatory_sources_left + non_consistent_lex_types #shape (batch_size, lexical type)
+        o_c, _ = torch.min(number_of_words_still_required, dim=1) #shape (batch_size,)
+        assert torch.all(o_c <= state.w_c) | done
 
         #  we can use the fact that when the set of term types has the smallest apply set n and the largest apply set m, for all n <= i <= m, there is an apply set of size i.
-        o_c = torch.relu(minimal_apply_set_size - collected_apply_set_size)
+        #o_c = torch.relu(minimal_apply_set_size - collected_apply_set_size)
         mod_mask = (state.w_c - o_c) >= 1 #shape (batch_size,)
 
-        consistent_with_remaining_words = (number_of_words_required - collected_apply_set_size.unsqueeze(1)) <= state.w_c.unsqueeze(1) #shape (batch_size, lexical type)
+        consistent_with_remaining_words = number_of_words_still_required <= state.w_c.unsqueeze(1) #shape (batch_size, lexical type)
+        #consistent_with_remaining_words = (number_of_words_required - collected_apply_set_size.unsqueeze(1)) <= state.w_c.unsqueeze(1) #shape (batch_size, lexical type)
         assert consistent_with_remaining_words.shape == (batch_size, len(self.i2lextyp))
 
         # TODO APP: all those APP_x such that, if we add x to our apply set
@@ -422,7 +426,14 @@ class LTL(TransitionSystem):
         #  --> (batch_size, lexical type)
         #  (parent lexical type, incoming label, lexical type, source) = True iff source in applyset from lexical type to SOME term type
         #  --> (batch_size, source), use index_OR
+        possible_obligatory_app_sources = batched_index_OR(consistent_with_remaining_words.int(), obligatory_apply_set.transpose(1,2).int()) #shape (batch_size, sources)
+        assert possible_obligatory_app_sources.shape == (batch_size, len(self.i2source))
+
         possible_app_sources = batched_index_OR(consistent_with_remaining_words.int(), A.int()) #shape (batch_size, sources)
+
+        #if o_c = w_c, then we cannot afford apply sources that are not necessary (e.g. parent lex type (mod, mod2) -- MOD_mod2 (mod, mod2, op1, op2, op3)
+        # with three words left, we have to close op1, op2, op3 instead of mod although that would be allowed otherwise.
+        possible_app_sources &= (state.w_c > o_c).unsqueeze(1) | possible_obligatory_app_sources #shape (batch_size,)
 
         #  mask out all sources that have been used already
         possible_app_sources &= ~applyset
