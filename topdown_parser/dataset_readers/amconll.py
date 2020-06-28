@@ -20,6 +20,7 @@ from .ContextField import ContextField
 from .amconll_tools import parse_amconll, AMSentence
 from ..am_algebra.tools import is_welltyped, get_term_types
 from topdown_parser.transition_systems.transition_system import TransitionSystem, DecisionBatch
+from ..nn.utils import move_tensor_dict
 from ..transition_systems.parsing_state import BatchedParsingState
 
 from tqdm import tqdm
@@ -45,6 +46,7 @@ class AMConllDatasetReader(OrderedDatasetReader):
                  overwrite_formalism : str = None,
                  workers : int = 1,
                  run_oracle : bool = True,
+                 device : int = None,
                  fuzz: bool = False,
                  fuzz_beam_search : bool = False,
                  use_tqdm : bool = False,
@@ -61,6 +63,9 @@ class AMConllDatasetReader(OrderedDatasetReader):
         self.fraction = fraction
         self.only_read_fraction_if_train_in_filename = only_read_fraction_if_train_in_filename
         self.lexicon = transition_system.additional_lexicon
+        if device < 0:
+            device = None
+        self.device = device
 
     def collect_sentences(self, file_path : str) -> List[AMSentence]:
         file_path = cached_path(file_path)
@@ -156,8 +161,8 @@ class AMConllDatasetReader(OrderedDatasetReader):
 
         # Try to reconstruct tree
         stripped_sentence = am_sentence.strip_annotation()
-
-        state : BatchedParsingState = self.transition_system.initial_state([stripped_sentence], None)
+        self.transition_system.prepare(device=self.device)
+        state : BatchedParsingState = self.transition_system.initial_state([stripped_sentence], None, device=self.device)
         active_nodes = [0]
         #next_active = torch.tensor([0])
         # print(am_sentence)
@@ -173,16 +178,16 @@ class AMConllDatasetReader(OrderedDatasetReader):
                 # if len(v.shape) > 1: #remove batch dimension, we have only one batch element
                 #     v = v.squeeze(0)
 
-                contexts[k].append(v.numpy())
+                contexts[k].append(v.cpu().numpy())
             # print(i, next_active, decisions[i].position, self.transition_system.gather_context(next_active))
 
-            decision_batch = decision_batch_type.from_decision(decisions[i], self.lexicon)
+            decision_batch = decision_batch_type.from_decision(decisions[i], self.lexicon).to(self.device)
             self.transition_system.step(state, decision_batch)
 
             if state.is_complete():
                 break
 
-            active_nodes.append(int(state.stack.peek().numpy()))
+            active_nodes.append(int(state.stack.peek().cpu().numpy()))
 
         assert state.is_complete(), f"State should be complete: {state}"
         reconstructed = state.extract_trees()[0]
@@ -193,9 +198,10 @@ class AMConllDatasetReader(OrderedDatasetReader):
             ## Now with oracle scores:
             stripped_sentence = am_sentence.strip_annotation()
 
-            state : BatchedParsingState = self.transition_system.initial_state([stripped_sentence], None)
+            state : BatchedParsingState = self.transition_system.initial_state([stripped_sentence], None, device=self.device)
             for decision in decisions[1:]:
                 scores = self.transition_system.decision_to_score(stripped_sentence, decision)
+                scores = move_tensor_dict(scores, self.device)
                 decision_prime = self.transition_system.make_decision(scores, state)
                 self.transition_system.step(state, decision_prime)
             assert state.is_complete()
@@ -210,9 +216,10 @@ class AMConllDatasetReader(OrderedDatasetReader):
             hash_value = len(am_sentence) + sum(len(w.token)*ord(w.token[0])*ord(w.token[-1]) for w in am_sentence.words)
             # print(hash_value)
             torch.random.manual_seed(hash_value)
-            state : BatchedParsingState = self.transition_system.initial_state([stripped_sentence], None)
+            state : BatchedParsingState = self.transition_system.initial_state([stripped_sentence], None, device=self.device)
             for i in range(2*len(stripped_sentence)+1):
                 scores = self.transition_system.fuzz_scores(stripped_sentence, beam_search=False)
+                scores = move_tensor_dict(scores, self.device)
                 decision = self.transition_system.make_decision(scores, state)
                 self.transition_system.step(state, decision)
 

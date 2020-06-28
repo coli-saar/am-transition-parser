@@ -2,6 +2,10 @@ from typing import Tuple, Set
 
 import torch
 
+def make_bool_multipliable(t : torch.Tensor) -> torch.Tensor:
+    if t.is_cuda:
+        return t.half() #float 16 is good enough, I hope.
+    return t.int()
 
 def are_eq(a : torch.Tensor, b : torch.Tensor) -> torch.BoolTensor:
     if a.dtype == torch.float or a.dtype == torch.float16 or b.dtype == torch.float or b.dtype == torch.float16:
@@ -51,8 +55,9 @@ def consistent_with_and_can_finish_now(batched_set: torch.BoolTensor, mapping: t
     """
     set_size = batched_set.sum(dim=1) #shape (batch_size,)
     #result = torch.einsum("bs, bsl -> bl", batched_set, mapping)
-    result = (torch.bmm(batched_set.unsqueeze(1), mapping)).squeeze(1) #shape (batch_size, "lexical types")
-    r2 = (torch.bmm(batched_set.unsqueeze(1), obligatory_apply_set)).squeeze(1) #shape (batch_size, "lexical types")
+    batched_set_unsq = batched_set.unsqueeze(1)
+    result = (torch.bmm(batched_set_unsq, mapping)).squeeze(1) #shape (batch_size, "lexical types")
+    r2 = (torch.bmm(batched_set_unsq, obligatory_apply_set)).squeeze(1) #shape (batch_size, "lexical types")
     # number of obligatory sources that we have already.
 
     #s = obligatory_apply_set.sum(dim=1) #shape (batch_size, "lexical types",), contains the size of the apply set for each lexical type
