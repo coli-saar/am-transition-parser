@@ -15,6 +15,7 @@ import allennlp.nn.util as util
 if __name__ == "__main__":
     import_submodules("topdown_parser")
     from topdown_parser.dataset_readers.same_formalism_iterator import SameFormalismIterator
+    from topdown_parser.dataset_readers.amconll_tools import parse_amconll
 
     optparser = argparse.ArgumentParser(add_help=True,
                                         description="Parse an amconll file (no annotions) with beam search.")
@@ -49,5 +50,12 @@ if __name__ == "__main__":
     t0 = time.time()
     pipelinepieces.annotator.annotate_file(model, args.input_file, args.output_file)
     t1 = time.time()
-    print("Prediction took", t1-t0, "seconds")
+
+    cumulated_parse_time = 0.0
+    with open(args.output_file) as f:
+        for am_sentence in parse_amconll(f):
+            cumulated_parse_time += float(am_sentence.attributes["normalized_parsing_time"])
+
+    print("Prediction took", t1-t0, "seconds overall")
+    print("Parsing time was", cumulated_parse_time)
 

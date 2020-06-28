@@ -364,7 +364,7 @@ class LTL(TransitionSystem):
         assert can_finish_now.shape == (batch_size, len(self.lextyp2i))
 
         # TEST, there always has to be at least one lexical type that is consistent with what we have done.
-        assert (torch.sum(consistent_lex_types, dim=1) >= 1) | done
+        assert torch.all((torch.sum(consistent_lex_types, dim=1) >= 1) | done)
         # TEST
 
         # we can potentially close the current node
@@ -418,7 +418,7 @@ class LTL(TransitionSystem):
         assert torch.all(number_of_words_still_required >= 0)
 
         o_c, _ = torch.min(number_of_words_still_required, dim=1) #shape (batch_size,)
-        assert torch.all(o_c <= state.w_c) | done
+        assert torch.all((o_c <= state.w_c) | done)
 
         #  we can use the fact that when the set of term types has the smallest apply set n and the largest apply set m, for all n <= i <= m, there is an apply set of size i.
         #o_c = torch.relu(minimal_apply_set_size - collected_apply_set_size)

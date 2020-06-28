@@ -118,6 +118,7 @@ class TopDownDependencyParser(Model):
 
         self.heads_correct = 0
         self.heads_predicted = 0
+        self.prepared = False
 
         self.transition_system.validate_model(self)
 
@@ -143,6 +144,10 @@ class TopDownDependencyParser(Model):
                 term_type_mask : Optional[torch.Tensor] = None,
                 heads : Optional[torch.Tensor] = None) -> Dict[str, torch.Tensor]:
 
+        if not self.prepared:
+            self.transition_system.prepare(get_device_id(pos_tags))
+            self.prepared = True
+
         parsing_time_t0 = time.time()
 
         self.has_been_training_before = self.has_empty_tree_type or self.training
@@ -161,7 +166,6 @@ class TopDownDependencyParser(Model):
                                                      heads, context)
 
         if not self.training:
-
             sentences = [s.strip_annotation() for s in sentences]
             # import cProfile
             # with cProfile.Profile() as pr:

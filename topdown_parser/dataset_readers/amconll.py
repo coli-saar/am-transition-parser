@@ -63,7 +63,7 @@ class AMConllDatasetReader(OrderedDatasetReader):
         self.fraction = fraction
         self.only_read_fraction_if_train_in_filename = only_read_fraction_if_train_in_filename
         self.lexicon = transition_system.additional_lexicon
-        if device < 0:
+        if device is not None and device < 0:
             device = None
         self.device = device
 

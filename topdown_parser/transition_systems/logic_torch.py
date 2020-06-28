@@ -4,8 +4,12 @@ import torch
 
 def make_bool_multipliable(t : torch.Tensor) -> torch.Tensor:
     if t.is_cuda:
-        return t.half() #float 16 is good enough, I hope.
-    return t.int()
+        if not (t.dtype == torch.float or t.dtype == torch.float16):
+            return t.half() #float 16 is good enough, I hope.
+    else:
+        if not (t.dtype == torch.int32 or t.dtype == torch.long or t.dtype == torch.int16):
+            return t.int()
+    return t
 
 def are_eq(a : torch.Tensor, b : torch.Tensor) -> torch.BoolTensor:
     if a.dtype == torch.float or a.dtype == torch.float16 or b.dtype == torch.float or b.dtype == torch.float16:

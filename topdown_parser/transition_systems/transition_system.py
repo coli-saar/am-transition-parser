@@ -70,6 +70,9 @@ class TransitionSystem(Registrable):
     def guarantees_well_typedness(self) -> bool:
         raise NotImplementedError()
 
+    def prepare(self, device : Optional[int]) -> None:
+        return
+
     def validate_model(self, parser : "TopDownDependencyParser") -> None:
         """
         Check if the parsing model produces all the scores that we need.
