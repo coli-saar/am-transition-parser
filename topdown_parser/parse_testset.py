@@ -45,6 +45,7 @@ if __name__ == "__main__":
         pipelinepieces.annotator.data_iterator = SameFormalismIterator(iterator.formalisms, args.batch_size)
 
     annotator = pipelinepieces.annotator
+    annotator.dataset_reader.workers = 1
 
     parse_test : ParseTest = pipelinepieces.callbacks.callbacks[CallbackName.AFTER_TRAINING.value]
     parse_test.active = True

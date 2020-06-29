@@ -47,8 +47,10 @@ if __name__ == "__main__":
         iterator : SameFormalismIterator = pipelinepieces.annotator.data_iterator
         pipelinepieces.annotator.data_iterator = SameFormalismIterator(iterator.formalisms, args.batch_size)
 
+    annotator = pipelinepieces.annotator
+    annotator.dataset_reader.workers = 1
     t0 = time.time()
-    pipelinepieces.annotator.annotate_file(model, args.input_file, args.output_file)
+    annotator.annotate_file(model, args.input_file, args.output_file)
     t1 = time.time()
 
     cumulated_parse_time = 0.0

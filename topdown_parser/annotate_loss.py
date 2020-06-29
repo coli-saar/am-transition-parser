@@ -56,6 +56,6 @@ if __name__ == "__main__":
     pipelinepieces = PipelineTrainerPieces.from_params(config)
 
     loss_annotator = LossAnnotator(pipelinepieces.annotator.data_iterator, pipelinepieces.annotator.dataset_reader, pipelinepieces.annotator.dataset_writer)
-
+    loss_annotator.dataset_reader.workers = 1
     loss_annotator.annotate_file(model, args.input_file, args.output_file)
 
