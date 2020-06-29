@@ -30,9 +30,14 @@ class DiGraph: #Generic[NT]
             
         self.edges[n1][n2] = label
         self._hash = None
-        
+
+    def get_parents(self, n : NT) -> Iterable[NT]:
+        for some_node, children in self.edges.items():
+            if n in children:
+                yield some_node
+
     def __repr__(self) -> str:
-        return "DiGraph<"+self.origins+","+self.edges+">"
+        return "DiGraph<"+repr(self.origins)+","+repr(self.edges)+">"
     
     def closure(self):
         """
