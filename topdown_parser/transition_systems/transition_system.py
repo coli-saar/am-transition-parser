@@ -144,6 +144,13 @@ class TransitionSystem(Registrable):
         return True
         #raise NotImplementedError()
 
+    def get_unconstrained_version(self) -> "TransitionSystem":
+        """
+        Return an unconstrained version that does not do type checking.
+        :return:
+        """
+        raise NotImplementedError()
+
     def decision_to_score(self, sentence : AMSentence, decision) -> Dict[str, torch.Tensor]:
         """
         In order to simulate scores for training data.

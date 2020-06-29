@@ -159,15 +159,20 @@ class AMConllDatasetReader(OrderedDatasetReader):
 
         #assert len(decisions) == len(active_nodes) + 1
 
+        if not (self.run_oracle or self.fuzz or self.fuzz_beam_search):
+            transition_system = self.transition_system.get_unconstrained_version()
+        else:
+            transition_system = self.transition_system
+
         # Try to reconstruct tree
         stripped_sentence = am_sentence.strip_annotation()
-        self.transition_system.prepare(device=self.device)
-        state : BatchedParsingState = self.transition_system.initial_state([stripped_sentence], None, device=self.device)
+        transition_system.prepare(device=self.device)
+        state : BatchedParsingState = transition_system.initial_state([stripped_sentence], None, device=self.device)
         active_nodes = [0]
         #next_active = torch.tensor([0])
         # print(am_sentence)
         contexts = dict()
-        decision_batch_type = self.transition_system.get_decision_batch_type()
+        decision_batch_type = transition_system.get_decision_batch_type()
         for i in range(1, len(decisions)):
             #Gather context
             context = state.gather_context() #device: cpu
@@ -182,7 +187,7 @@ class AMConllDatasetReader(OrderedDatasetReader):
             # print(i, next_active, decisions[i].position, self.transition_system.gather_context(next_active))
 
             decision_batch = decision_batch_type.from_decision(decisions[i], self.lexicon).to(self.device)
-            self.transition_system.step(state, decision_batch)
+            transition_system.step(state, decision_batch)
 
             if state.is_complete():
                 break
@@ -192,7 +197,7 @@ class AMConllDatasetReader(OrderedDatasetReader):
         assert state.is_complete(), f"State should be complete: {state}"
         reconstructed = state.extract_trees()[0]
 
-        assert self.transition_system.check_correct(am_sentence, reconstructed), f"Could not reconstruct this sentence\n: {am_sentence.get_tokens(False)}"
+        assert transition_system.check_correct(am_sentence, reconstructed), f"Could not reconstruct this sentence\n: {am_sentence.get_tokens(False)}"
 
         if self.run_oracle:
             ## Now with oracle scores:

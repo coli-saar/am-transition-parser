@@ -14,6 +14,7 @@ from topdown_parser.dataset_readers.amconll_tools import AMSentence
 from topdown_parser.datastructures.list_of_list import BatchedListofList
 from topdown_parser.datastructures.stack import BatchedStack
 from topdown_parser.nn.utils import get_device_id
+from topdown_parser.transition_systems.dfs_children_first import DFSChildrenFirst
 from topdown_parser.transition_systems.logic_torch import consistent_with_and_can_finish_now, tensor_or, index_OR, \
     batched_index_OR, debug_to_set, make_bool_multipliable, LookupTensor
 from topdown_parser.transition_systems.parsing_state import BatchedParsingState
@@ -220,6 +221,13 @@ class LTL(TransitionSystem):
             label_id = self.additional_lexicon.get_id("edge_labels", "APP_"+source)
             self.label_id2appsource[label_id] = source_id
             self.app_source2label_id[source_id, label_id] = True
+
+    def get_unconstrained_version(self) -> "TransitionSystem":
+        """
+        Return an unconstrained version that does not do type checking.
+        :return:
+        """
+        return DFSChildrenFirst(self.children_order, self.pop_with_0, self.additional_lexicon, self.reverse_push_actions)
 
     def prepare(self, device: Optional[int]):
         #self.minimal_apply_sets = self.minimal_apply_sets.to(device)

@@ -36,6 +36,13 @@ class DFS(TransitionSystem):
     def guarantees_well_typedness(self) -> bool:
         return False
 
+    def get_unconstrained_version(self) -> "TransitionSystem":
+        """
+        Return an unconstrained version that does not do type checking.
+        :return:
+        """
+        return self
+
     def _construct_seq(self, tree: Tree, is_first_child : bool, parent_type : Tuple[str, str], parent_lex_label : str) -> List[Decision]:
         own_position = tree.node[0]
         to_left = []
