@@ -73,18 +73,19 @@ class BatchedStack:
         if torch.any(self.stack_ptr < 0):
             raise ValueError("Stack empty")
 
-        mask = push_mask.long()
-        neg_mask = 1 - mask
+        mask = push_mask #.long()
+        neg_mask = ~mask
         if reverse:
             r = range(elements.shape[1])
         else:
             r = range(elements.shape[1]-1,-1,-1)
 
+        something_in_that_dim = torch.any(mask, dim=0).cpu().numpy() #shape (some_len,)
         for i in r:
-            m = mask[:, i]
-            vector = elements[:, i]
-
-            self.stack_ptr += m
-            self.stack[self.batch_range, self.stack_ptr] = neg_mask[:,i] * self.stack[self.batch_range, self.stack_ptr] +  m * vector
+            if something_in_that_dim[i]:
+                m = mask[:, i]
+                vector = elements[:, i]
+                self.stack_ptr += m
+                self.stack[self.batch_range, self.stack_ptr] = neg_mask[:,i] * self.stack[self.batch_range, self.stack_ptr] +  m * vector
 
         self.done_mask |= (self.stack_ptr == 0)

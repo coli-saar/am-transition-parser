@@ -67,7 +67,8 @@ class LTL(TransitionSystem):
 
     def __init__(self, children_order: str, pop_with_0: bool,
                  additional_lexicon: AdditionalLexicon,
-                 reverse_push_actions: bool = False):
+                 reverse_push_actions: bool = False,
+                 enable_assert : bool = False):
         """
         Select children_order : "LR" (left to right) or "IO" (inside-out, recommended by Ma et al.)
         reverse_push_actions means that the order of push actions is the opposite order in which the children of
@@ -76,6 +77,7 @@ class LTL(TransitionSystem):
         super().__init__(additional_lexicon)
         self.pop_with_0=pop_with_0
         self.reverse_push_actions = reverse_push_actions
+        self.enable_assert = enable_assert
         assert children_order in ["LR", "IO", "RL"], "unknown children order"
 
         self.children_order = children_order
@@ -383,13 +385,15 @@ class LTL(TransitionSystem):
         apply_set_exists = self.apply_set_exists[lexical_type_parent, incoming_labels] #shape (batch_size, lexical types, )
         #minimal_apply_set_size = self.minimal_apply_sets[lexical_type_parent, incoming_labels] #shape (batch_size, lexical type,) with apply set size
 
-        can_finish_now, consistent_lex_types, obligatory_sources_collected, total_obligatory = consistent_with_and_can_finish_now(applyset, At, apply_set_exists, obligatory_apply_set, conditionally_obl_sources) #both have shape (batch_size, lexical types) and are bool tensors
+        can_finish_now, consistent_lex_types, obligatory_sources_collected, total_obligatory, minimal_apply_set_size = consistent_with_and_can_finish_now(applyset, At, apply_set_exists, obligatory_apply_set, conditionally_obl_sources) #both have shape (batch_size, lexical types) and are bool tensors
         assert can_finish_now.shape == (batch_size, len(self.lextyp2i))
         assert total_obligatory.shape == (batch_size, len(self.i2source), len(self.lextyp2i))
+        assert minimal_apply_set_size.shape == (batch_size, len(self.lextyp2i))
 
 
         # TEST, there always has to be at least one lexical type that is consistent with what we have done.
-        assert torch.all((torch.sum(consistent_lex_types, dim=1) >= 1) | done)
+        if self.enable_assert:
+            assert torch.all((torch.sum(consistent_lex_types, dim=1) >= 1) | done)
         # TEST
 
         # we can potentially close the current node
@@ -398,12 +402,11 @@ class LTL(TransitionSystem):
         finishable = tensor_or(can_finish_now, dim=1) #shape (batch_size,)
         assert finishable.shape == (batch_size, )
         if self.pop_with_0:
-            mask[batch_range, 0] *= (depth > 0)
-            mask[:, 0] *= finishable
+            mask[batch_range, 0] &= (depth > 0)
+            mask[:, 0] &= finishable
         else:
-            mask[batch_range, active_nodes] *= (depth > 0)
-            mask[batch_range, active_nodes] *= finishable
-
+            mask[batch_range, active_nodes] &= (depth > 0)
+            mask[batch_range, active_nodes] &= finishable
 
         mask = mask.long()
         mask *= state.position_mask()  # shape (batch_size, input_seq_len)
@@ -416,35 +419,38 @@ class LTL(TransitionSystem):
         else:
             pop_mask = torch.eq(selected_nodes, active_nodes)
 
-        push_mask: torch.Tensor = (~pop_mask) * allowed_selection  # we push when we don't pop (but only if we are allowed to push)
+        push_mask: torch.Tensor = (~pop_mask) & allowed_selection  # we push when we don't pop (but only if we are allowed to push)
         not_done = ~done
-        push_mask *= not_done  # we can only push if we are not done with the sentence yet.
-        pop_mask *= allowed_selection
-        pop_mask *= not_done
+        push_mask &= not_done  # we can only push if we are not done with the sentence yet.
+        pop_mask &= allowed_selection
+        pop_mask &= not_done
 
         # compute constants for all instances (will only be used if pop_mask = True)
         # RE-USE the lexical types from above.
         possible_constants = index_OR(make_bool_multipliable(can_finish_now), self.lexical2constant)
         assert possible_constants.shape == (batch_size, self.additional_lexicon.vocab_size("constants"))
-        constant_mask = (1-possible_constants.float())*10_000_000
+        constant_mask = (~possible_constants).float()*10_000_000
         selected_constants = torch.argmax(scores["constants_scores"]-constant_mask, dim=1) #shape (batch_size,)
 
         # Edge labels
 
         # We create masks for what edges are appropriate
         # MOD: all MOD_x edges are allowed provided that W_c - O_c >= 1
-        minimal_apply_set_size = total_obligatory.sum(dim=1)  #shape (batch_size, lexical types)
+        #minimal_apply_set_size = total_obligatory.sum(dim=1)  #shape (batch_size, lexical types)
 
-        assert minimal_apply_set_size.shape == (batch_size, len(self.i2lextyp))
-        non_consistent_lex_types = (1-consistent_lex_types.long())*10_000_000 #shape (batch_size, lexical type), at least one element is not extremely large, see assert above
+        #assert minimal_apply_set_size.shape == (batch_size, len(self.i2lextyp))
+
+        non_consistent_lex_types = (~consistent_lex_types)*10_000_000 #shape (batch_size, lexical type), at least one element is not extremely large, see assert above
         # non-consistent lexical types have huge number, all consistent types have 0 associated with them.
 
         # Find minimal apply set size of taking into account the lexical types that are consistent with out collected apply set.
         number_of_words_still_required = minimal_apply_set_size - obligatory_sources_collected + non_consistent_lex_types #shape (batch_size, lexical type)
-        assert torch.all(number_of_words_still_required >= 0)
+        if self.enable_assert:
+            assert torch.all(number_of_words_still_required >= 0)
 
         o_c, _ = torch.min(number_of_words_still_required, dim=1) #shape (batch_size,)
-        assert torch.all((o_c <= state.w_c) | done)
+        if self.enable_assert:
+            assert torch.all((o_c <= state.w_c) | done)
 
         #  we can use the fact that when the set of term types has the smallest apply set n and the largest apply set m, for all n <= i <= m, there is an apply set of size i.
         #o_c = torch.relu(minimal_apply_set_size - collected_apply_set_size)
@@ -479,7 +485,8 @@ class LTL(TransitionSystem):
 
         edge_mask[mod_mask, :] |= self.mod_tensor #for some positions, we can also use MOD
         edge_mask[:, self.additional_lexicon.get_id("edge_labels", "ROOT")] = False
-        assert torch.all(torch.any(edge_mask, dim=1) | pop_mask | done) #always at least one edge label (or we pop anyway).
+        if self.enable_assert:
+            assert torch.all(torch.any(edge_mask, dim=1) | pop_mask | done) #always at least one edge label (or we pop anyway).
 
         edge_scores = self.add_missing_edge_scores(scores["all_labels_scores"][state.stack.batch_range, selected_nodes]) #shape (batch_size, edge labels)
 
@@ -512,7 +519,7 @@ class LTL(TransitionSystem):
         #Check if new edge labels are APP or MOD
         #if APP, add respective source to collected apply set.
         sources_used = self.label_id2appsource[decision_batch.edge_labels] #shape (batch_size,)
-        app_mask = decision_batch.push_mask.bool() & (sources_used >= 0) #shape (batch_size,)
+        app_mask = decision_batch.push_mask & (sources_used >= 0) #shape (batch_size,)
         float_apply_mask = make_bool_multipliable(app_mask) # int or bool values, depending on whether we are on CPU or GPU
         state.applyset[range_batch_size, next_active_nodes, sources_used] = ~app_mask * state.applyset[range_batch_size, next_active_nodes, sources_used] + float_apply_mask
         #a = state.applyset.numpy()
@@ -533,8 +540,8 @@ class LTL(TransitionSystem):
 
         pop_mask = decision_batch.pop_mask #shape (batch_size,)
         active_children = state.children.lol[range_batch_size, next_active_nodes] #shape (batch_size, max. number of children)
-        push_all_children_mask = (active_children != 0).long() #shape (batch_size, max. number of children)
-        push_all_children_mask *= pop_mask.unsqueeze(1) # only push those children where we will pop the current node from the top of the stack.
+        push_all_children_mask = (active_children != 0) #shape (batch_size, max. number of children)
+        push_all_children_mask &= pop_mask.unsqueeze(1) # only push those children where we will pop the current node from the top of the stack.
 
         state.stack.pop_and_push_multiple(active_children, decision_batch.pop_mask, push_all_children_mask, reverse=self.reverse_push_actions)
 

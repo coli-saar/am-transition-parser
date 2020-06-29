@@ -85,7 +85,7 @@ def consistent_with_and_can_finish_now(batched_set: torch.BoolTensor, mapping: t
     # and how many sources are those?
     cond_ob = torch.einsum("blso, bs -> blo", conditionally_obligatory, batched_set) > 0 #shape (batch_size, lexical types, sources/set capacity)
     total_obligatory = cond_ob.transpose(1, 2) | obligatory_apply_set #shape (batch_size, set capacity, lexical types)
-    minimal_apply_set_size = total_obligatory.sum(dim=1)
+    minimal_apply_set_size = total_obligatory.sum(dim=1) #shape (batch_size, lexical types)
 
     set_size = batched_set.sum(dim=1) #shape (batch_size,)
     #result = torch.einsum("bs, bsl -> bl", batched_set, mapping)
@@ -105,7 +105,7 @@ def consistent_with_and_can_finish_now(batched_set: torch.BoolTensor, mapping: t
     can_finish_now = consistent & (r2 >= minimal_apply_set_size)
     #can_finish_now = consistent & are_eq(result, s)
 
-    return can_finish_now, consistent, r2, total_obligatory
+    return can_finish_now, consistent, r2, total_obligatory, minimal_apply_set_size
 
 def debug_to_set(t : torch.BoolTensor) -> Set[int]:
     return [{ i for i,x in enumerate(batch) if x} for batch in t.numpy()]
