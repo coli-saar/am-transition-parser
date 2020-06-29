@@ -1,6 +1,6 @@
 import time
 from functools import partial
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Dict, Iterable, List, Optional
 import logging
 
 import torch
@@ -16,7 +16,6 @@ from allennlp.data.instance import Instance
 from allennlp.data.token_indexers import SingleIdTokenIndexer, TokenIndexer
 from allennlp.data.tokenizers import Token
 
-from .AdditionalLexicon import AdditionalLexicon
 from .ContextField import ContextField
 from .amconll_tools import parse_amconll, AMSentence
 from ..am_algebra.tools import is_welltyped, get_term_types
@@ -28,168 +27,6 @@ from tqdm import tqdm
 
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
 
-
-class SentenceToInstanceHelper:
-
-    def __init__(self, lexicon: AdditionalLexicon,
-                 run_oracle : bool, fuzz : bool, fuzz_beam_search : bool, device: Optional[int]) -> None:
-        self.fuzz_beam_search = fuzz_beam_search
-        self.lexicon = lexicon
-        self.run_oracle = run_oracle
-        self.fuzz = fuzz
-        self.device = device
-
-    def sentence_to_field_dict(self, tuple : Tuple[AMSentence, TransitionSystem]) -> Optional[Dict[str, Field]]:
-        fields: Dict[str, Field] = {}
-        am_sentence = tuple[0]
-        transition_system = tuple[1]
-
-        if not am_sentence.is_annotated():
-            return fields
-
-            #We are dealing with training data, prepare it accordingly.
-
-        if not is_welltyped(am_sentence):
-            print("Skipping non-well-typed AMDep tree.")
-            print(am_sentence.get_tokens(shadow_art_root=False))
-            return None
-
-        am_sentence = am_sentence.normalize_types()
-
-        # print(am_sentence.get_tokens(False))
-        # print(am_sentence.get_heads())
-        # print(am_sentence.get_edge_labels())
-        # print([ AMSentence.split_supertag(s)[1] for s in am_sentence.get_supertags()])
-
-        decisions = list(transition_system.get_order(am_sentence))
-
-        ##################################################################
-        #Validate decision sequence and gather context:
-        assert decisions[0].position == 0
-        #assert active_nodes[0] == 0
-
-        #assert len(decisions) == len(active_nodes) + 1
-
-        # Try to reconstruct tree
-        stripped_sentence = am_sentence.strip_annotation()
-        transition_system.prepare(device=self.device)
-        state : BatchedParsingState = transition_system.initial_state([stripped_sentence], None, device=self.device)
-        active_nodes = [0]
-        #next_active = torch.tensor([0])
-        # print(am_sentence)
-        contexts = dict()
-        decision_batch_type = transition_system.get_decision_batch_type()
-        for i in range(1, len(decisions)):
-            #Gather context
-            context = state.gather_context() #device: cpu
-            for k, v in context.items():
-                if k not in contexts:
-                    contexts[k] = []
-
-                # if len(v.shape) > 1: #remove batch dimension, we have only one batch element
-                #     v = v.squeeze(0)
-
-                contexts[k].append(v.cpu().numpy())
-            # print(i, next_active, decisions[i].position, self.transition_system.gather_context(next_active))
-
-            decision_batch = decision_batch_type.from_decision(decisions[i], self.lexicon).to(self.device)
-            transition_system.step(state, decision_batch)
-
-            if state.is_complete():
-                break
-
-            active_nodes.append(int(state.stack.peek().cpu().numpy()))
-
-        assert state.is_complete(), f"State should be complete: {state}"
-        reconstructed = state.extract_trees()[0]
-
-        assert transition_system.check_correct(am_sentence, reconstructed), f"Could not reconstruct this sentence\n: {am_sentence.get_tokens(False)}"
-
-        if self.run_oracle:
-            ## Now with oracle scores:
-            stripped_sentence = am_sentence.strip_annotation()
-
-            state : BatchedParsingState = transition_system.initial_state([stripped_sentence], None, device=self.device)
-            for decision in decisions[1:]:
-                scores = transition_system.decision_to_score(stripped_sentence, decision)
-                scores = move_tensor_dict(scores, self.device)
-                decision_prime = transition_system.make_decision(scores, state)
-                transition_system.step(state, decision_prime)
-            assert state.is_complete()
-            reconstructed = state.extract_trees()[0]
-            assert transition_system.check_correct(am_sentence, reconstructed), f"Could not reconstruct this sentence\n: {am_sentence.get_tokens(False)}"
-
-        if self.fuzz:
-            # Now fuzz
-            rng_state = torch.random.get_rng_state()
-            stripped_sentence = am_sentence.strip_annotation()
-            # print([w.token for w in am_sentence.words])
-            hash_value = len(am_sentence) + sum(len(w.token)*ord(w.token[0])*ord(w.token[-1]) for w in am_sentence.words)
-            # print(hash_value)
-            torch.random.manual_seed(hash_value)
-            state : BatchedParsingState = transition_system.initial_state([stripped_sentence], None, device=self.device)
-            for i in range(2*len(stripped_sentence)+1):
-                scores = transition_system.fuzz_scores(stripped_sentence, beam_search=False)
-                scores = move_tensor_dict(scores, self.device)
-                decision = transition_system.make_decision(scores, state)
-                transition_system.step(state, decision)
-
-            # print(state.extract_trees()[0])
-            # from topdown_parser.am_algebra.tree import Tree
-            # t = Tree.from_am_sentence(state.extract_trees()[0])
-            # print(get_term_types(t, state.extract_trees()[0]))
-            assert state.is_complete()
-            assert (not transition_system.guarantees_well_typedness()) or is_welltyped(state.extract_trees()[0])
-            torch.random.set_rng_state(rng_state)
-
-        if self.fuzz_beam_search:
-            rng_state = torch.random.get_rng_state()
-            stripped_sentence = am_sentence.strip_annotation()
-            hash_value = len(am_sentence) + sum(len(w.token)*ord(w.token[0])*ord(w.token[-1]) for w in am_sentence.words)
-            torch.random.manual_seed(hash_value)
-            state : BatchedParsingState = transition_system.initial_state([stripped_sentence], None)
-            for _ in range(2*len(stripped_sentence)+1):
-                scores = transition_system.fuzz_scores(stripped_sentence, beam_search=True)
-                decision = transition_system.top_k_decision(scores, state, k=4)[0]
-                transition_system.step(state, decision)
-
-            assert state.is_complete()
-            assert (not transition_system.guarantees_well_typedness()) or is_welltyped(state.extract_trees()[0])
-            torch.random.set_rng_state(rng_state)
-
-        ##################################################################
-
-        # Create instance
-        seq = ListField([LabelField(decision.position, skip_indexing=True) for decision in decisions])
-        fields["seq"] = seq
-        fields["active_nodes"] = ListField(
-            [LabelField(active_node, skip_indexing=True) for active_node in active_nodes])
-
-        fields["labels"] = SequenceLabelField([self.lexicon.get_id("edge_labels",decision.label) for decision in decisions], seq)
-        fields["label_mask"] = SequenceLabelField([int(decision.label != "") for decision in decisions], seq)
-
-        fields["term_types"] = SequenceLabelField([self.lexicon.get_id("term_types", str(decision.termtyp)) if decision.termtyp is not None else 0 for decision in decisions], seq)
-
-        fields["term_type_mask"] = SequenceLabelField([int(decision.termtyp is not None) for decision in decisions], seq)
-
-        fields["lex_labels"] = SequenceLabelField([self.lexicon.get_id("lex_labels", decision.lexlabel) for decision in decisions], seq)
-        fields["lex_label_mask"] = SequenceLabelField([int(decision.lexlabel != "") for decision in decisions], seq)
-
-        fields["supertags"] = SequenceLabelField([self.lexicon.get_id("constants","--TYPE--".join(decision.supertag)) for decision in decisions], seq)
-
-        fields["supertag_mask"] = SequenceLabelField([int(decision.supertag[1] != "") for decision in decisions], seq)
-
-
-        fields["context"] = ContextField(
-            {name: ListField([ArrayField(array, dtype=array.dtype) for array in liste]) for name, liste in
-             contexts.items()})
-
-        # fields["supertags"] = SequenceLabelField(am_sentence.get_supertags(), tokens, label_namespace=formalism+"_supertag_labels")
-        # fields["lexlabels"] = SequenceLabelField(am_sentence.get_lexlabels(), tokens, label_namespace=formalism+"_lex_labels")
-        # fields["head_tags"] = SequenceLabelField(am_sentence.get_edge_labels(),tokens, label_namespace=formalism+"_head_tags") #edge labels
-        # fields["head_indices"] = SequenceLabelField(am_sentence.get_heads(),tokens,label_namespace="head_index_tags")
-
-        return fields
 
 @DatasetReader.register("amconll")
 class AMConllDatasetReader(OrderedDatasetReader):
@@ -247,29 +84,24 @@ class AMConllDatasetReader(OrderedDatasetReader):
     def read_file(self, file_path: str) -> Iterable[Instance]:
         # if `file_path` is a URL, redirect to the cache
         sents : List[AMSentence] = self.collect_sentences(file_path)
-        helper = SentenceToInstanceHelper(self.lexicon, self.run_oracle, self.fuzz, self.fuzz_beam_search, self.device)
         t1 = time.time()
         if self.workers < 2: #or self.workers >= len(sents):
             #import cProfile
             #with cProfile.Profile() as pr:
             if self.use_tqdm:
                 sents = tqdm(sents)
-            r = [helper.sentence_to_field_dict((s, self.transition_system)) for s in sents]
+            r = [self.text_to_instance(s) for s in sents]
             #pr.print_stats()
         else:
-            sents_with_tr = [ (s, self.transition_system) for s in sents]
             with mp.Pool(self.workers) as pool:
-                r = pool.map(helper.sentence_to_field_dict, sents_with_tr)
-
-        r = [self.text_to_instance(sent, x) for x,sent in zip(r, sents)]
+                r = pool.map(self.text_to_instance, sents)
         delta = time.time() - t1
         logger.info(f"Reading took {round(delta,3)} seconds")
-
         return [x for x in r if x is not None]
 
     @overrides
     def text_to_instance(self,  # type: ignore
-                         am_sentence: AMSentence, fields: Optional[Dict[str, Field]]) -> Optional[Instance]:
+                         am_sentence: AMSentence) -> Optional[Instance]:
         # pylint: disable=arguments-differ
         """
         Parameters
@@ -284,14 +116,15 @@ class AMConllDatasetReader(OrderedDatasetReader):
         An instance containing words, pos tags, dependency edge labels, head
         indices, supertags and lexical labels as fields.
         """
-        if fields is None:
-            return None
+        fields: Dict[str, Field] = {}
+
         if self.overwrite_formalism is not None:
             formalism = self.overwrite_formalism
         else:
             formalism = am_sentence.attributes["framework"]
 
         am_sentence = am_sentence.fix_dev_edge_labels()
+
         tokens = TextField([Token(w) for w in am_sentence.get_tokens(shadow_art_root=True)], self._token_indexers)
         fields["words"] = tokens
         fields["pos_tags"] = SequenceLabelField(am_sentence.get_pos(), tokens, label_namespace="pos")
@@ -300,7 +133,150 @@ class AMConllDatasetReader(OrderedDatasetReader):
         fields["metadata"] = MetadataField({"formalism": formalism,
                                             "am_sentence": am_sentence,
                                             "is_annotated": am_sentence.is_annotated()})
+        if not am_sentence.is_annotated():
+            return Instance(fields)
+
+        #We are dealing with training data, prepare it accordingly.
+
+        if not is_welltyped(am_sentence):
+            print("Skipping non-well-typed AMDep tree.")
+            print(am_sentence.get_tokens(shadow_art_root=False))
+            return None
+
+        am_sentence = am_sentence.normalize_types()
+
+        # print(am_sentence.get_tokens(False))
+        # print(am_sentence.get_heads())
+        # print(am_sentence.get_edge_labels())
+        # print([ AMSentence.split_supertag(s)[1] for s in am_sentence.get_supertags()])
+
+        decisions = list(self.transition_system.get_order(am_sentence))
+
+        ##################################################################
+        #Validate decision sequence and gather context:
+        assert decisions[0].position == 0
+        #assert active_nodes[0] == 0
+
+        #assert len(decisions) == len(active_nodes) + 1
+
+        # Try to reconstruct tree
+        stripped_sentence = am_sentence.strip_annotation()
+        self.transition_system.prepare(device=self.device)
+        state : BatchedParsingState = self.transition_system.initial_state([stripped_sentence], None, device=self.device)
+        active_nodes = [0]
+        #next_active = torch.tensor([0])
+        # print(am_sentence)
+        contexts = dict()
+        decision_batch_type = self.transition_system.get_decision_batch_type()
+        for i in range(1, len(decisions)):
+            #Gather context
+            context = state.gather_context() #device: cpu
+            for k, v in context.items():
+                if k not in contexts:
+                    contexts[k] = []
+
+                # if len(v.shape) > 1: #remove batch dimension, we have only one batch element
+                #     v = v.squeeze(0)
+
+                contexts[k].append(v.cpu().numpy())
+            # print(i, next_active, decisions[i].position, self.transition_system.gather_context(next_active))
+
+            decision_batch = decision_batch_type.from_decision(decisions[i], self.lexicon).to(self.device)
+            self.transition_system.step(state, decision_batch)
+
+            if state.is_complete():
+                break
+
+            active_nodes.append(int(state.stack.peek().cpu().numpy()))
+
+        assert state.is_complete(), f"State should be complete: {state}"
+        reconstructed = state.extract_trees()[0]
+
+        assert self.transition_system.check_correct(am_sentence, reconstructed), f"Could not reconstruct this sentence\n: {am_sentence.get_tokens(False)}"
+
+        if self.run_oracle:
+            ## Now with oracle scores:
+            stripped_sentence = am_sentence.strip_annotation()
+
+            state : BatchedParsingState = self.transition_system.initial_state([stripped_sentence], None, device=self.device)
+            for decision in decisions[1:]:
+                scores = self.transition_system.decision_to_score(stripped_sentence, decision)
+                scores = move_tensor_dict(scores, self.device)
+                decision_prime = self.transition_system.make_decision(scores, state)
+                self.transition_system.step(state, decision_prime)
+            assert state.is_complete()
+            reconstructed = state.extract_trees()[0]
+            assert self.transition_system.check_correct(am_sentence, reconstructed), f"Could not reconstruct this sentence\n: {am_sentence.get_tokens(False)}"
+
+        if self.fuzz:
+            # Now fuzz
+            rng_state = torch.random.get_rng_state()
+            stripped_sentence = am_sentence.strip_annotation()
+            # print([w.token for w in am_sentence.words])
+            hash_value = len(am_sentence) + sum(len(w.token)*ord(w.token[0])*ord(w.token[-1]) for w in am_sentence.words)
+            # print(hash_value)
+            torch.random.manual_seed(hash_value)
+            state : BatchedParsingState = self.transition_system.initial_state([stripped_sentence], None, device=self.device)
+            for i in range(2*len(stripped_sentence)+1):
+                scores = self.transition_system.fuzz_scores(stripped_sentence, beam_search=False)
+                scores = move_tensor_dict(scores, self.device)
+                decision = self.transition_system.make_decision(scores, state)
+                self.transition_system.step(state, decision)
+
+            # print(state.extract_trees()[0])
+            # from topdown_parser.am_algebra.tree import Tree
+            # t = Tree.from_am_sentence(state.extract_trees()[0])
+            # print(get_term_types(t, state.extract_trees()[0]))
+            assert state.is_complete()
+            assert (not self.transition_system.guarantees_well_typedness()) or is_welltyped(state.extract_trees()[0])
+            torch.random.set_rng_state(rng_state)
+
+        if self.fuzz_beam_search:
+            rng_state = torch.random.get_rng_state()
+            stripped_sentence = am_sentence.strip_annotation()
+            hash_value = len(am_sentence) + sum(len(w.token)*ord(w.token[0])*ord(w.token[-1]) for w in am_sentence.words)
+            torch.random.manual_seed(hash_value)
+            state : BatchedParsingState = self.transition_system.initial_state([stripped_sentence], None)
+            for _ in range(2*len(stripped_sentence)+1):
+                scores = self.transition_system.fuzz_scores(stripped_sentence, beam_search=True)
+                decision = self.transition_system.top_k_decision(scores, state, k=4)[0]
+                self.transition_system.step(state, decision)
+
+            assert state.is_complete()
+            assert (not self.transition_system.guarantees_well_typedness()) or is_welltyped(state.extract_trees()[0])
+            torch.random.set_rng_state(rng_state)
+
+        ##################################################################
+
+        # Create instance
+        seq = ListField([LabelField(decision.position, skip_indexing=True) for decision in decisions])
+        fields["seq"] = seq
+        fields["active_nodes"] = ListField(
+            [LabelField(active_node, skip_indexing=True) for active_node in active_nodes])
+
+        fields["labels"] = SequenceLabelField([self.lexicon.get_id("edge_labels",decision.label) for decision in decisions], seq)
+        fields["label_mask"] = SequenceLabelField([int(decision.label != "") for decision in decisions], seq)
+
+        fields["term_types"] = SequenceLabelField([self.lexicon.get_id("term_types", str(decision.termtyp)) if decision.termtyp is not None else 0 for decision in decisions], seq)
+
+        fields["term_type_mask"] = SequenceLabelField([int(decision.termtyp is not None) for decision in decisions], seq)
+
+        fields["lex_labels"] = SequenceLabelField([self.lexicon.get_id("lex_labels", decision.lexlabel) for decision in decisions], seq)
+        fields["lex_label_mask"] = SequenceLabelField([int(decision.lexlabel != "") for decision in decisions], seq)
+
+        fields["supertags"] = SequenceLabelField([self.lexicon.get_id("constants","--TYPE--".join(decision.supertag)) for decision in decisions], seq)
+
+        fields["supertag_mask"] = SequenceLabelField([int(decision.supertag[1] != "") for decision in decisions], seq)
+
         fields["heads"] = SequenceLabelField(am_sentence.get_heads(), tokens)
 
-        return Instance(fields)
+        fields["context"] = ContextField(
+            {name: ListField([ArrayField(array, dtype=array.dtype) for array in liste]) for name, liste in
+             contexts.items()})
 
+        # fields["supertags"] = SequenceLabelField(am_sentence.get_supertags(), tokens, label_namespace=formalism+"_supertag_labels")
+        # fields["lexlabels"] = SequenceLabelField(am_sentence.get_lexlabels(), tokens, label_namespace=formalism+"_lex_labels")
+        # fields["head_tags"] = SequenceLabelField(am_sentence.get_edge_labels(),tokens, label_namespace=formalism+"_head_tags") #edge labels
+        # fields["head_indices"] = SequenceLabelField(am_sentence.get_heads(),tokens,label_namespace="head_index_tags")
+
+        return Instance(fields)
