@@ -50,8 +50,10 @@ class AMConllDatasetReader(OrderedDatasetReader):
                  fuzz: bool = False,
                  fuzz_beam_search : bool = False,
                  use_tqdm : bool = False,
-                 only_read_fraction_if_train_in_filename: bool = False) -> None:
+                 only_read_fraction_if_train_in_filename: bool = False,
+                 read_tokens_only: bool = False) -> None:
         super().__init__(lazy)
+        self.read_tokens_only = read_tokens_only
         self.use_tqdm = use_tqdm
         self.fuzz_beam_search = fuzz_beam_search
         self.fuzz = fuzz
@@ -133,7 +135,7 @@ class AMConllDatasetReader(OrderedDatasetReader):
         fields["metadata"] = MetadataField({"formalism": formalism,
                                             "am_sentence": am_sentence,
                                             "is_annotated": am_sentence.is_annotated()})
-        if not am_sentence.is_annotated():
+        if not am_sentence.is_annotated() or self.read_tokens_only:
             return Instance(fields)
 
         #We are dealing with training data, prepare it accordingly.

@@ -50,10 +50,8 @@ if __name__ == "__main__":
     annotator = pipelinepieces.annotator
     annotator.dataset_reader.workers = 1
 
-    #Deactivate any of that:
-    annotator.dataset_reader.run_oracle = False
-    annotator.dataset_reader.fuzz = False
-    annotator.dataset_reader.fuzz_beam_search = False
+    #Don't read in entire AM dependency trees, just the tokens.
+    annotator.dataset_reader.read_tokens_only = True
 
     t0 = time.time()
     annotator.annotate_file(model, args.input_file, args.output_file)
