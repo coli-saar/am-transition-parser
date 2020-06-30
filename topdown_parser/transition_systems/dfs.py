@@ -170,5 +170,5 @@ class DFS(TransitionSystem):
         state.constants[range_batch_size, next_active_nodes] = inverse_constant_mask * state.constants[range_batch_size, next_active_nodes] + decision_batch.constant_mask * decision_batch.constants
         state.lex_labels[range_batch_size, next_active_nodes] = inverse_constant_mask*state.lex_labels[range_batch_size, next_active_nodes] + decision_batch.constant_mask * decision_batch.lex_labels
 
-        state.stack.push(decision_batch.push_tokens, decision_batch.push_mask)
-        state.stack.pop_wo_peek(decision_batch.pop_mask)
+        state.stack.push(decision_batch.push_tokens, decision_batch.push_mask.bool())
+        state.stack.pop_wo_peek(decision_batch.pop_mask.bool())

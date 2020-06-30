@@ -179,10 +179,10 @@ class DFSChildrenFirst(TransitionSystem):
         state.constants[range_batch_size, next_active_nodes] = inverse_constant_mask * state.constants[range_batch_size, next_active_nodes] + decision_batch.constant_mask * decision_batch.constants
         state.lex_labels[range_batch_size, next_active_nodes] = inverse_constant_mask*state.lex_labels[range_batch_size, next_active_nodes] + decision_batch.constant_mask * decision_batch.lex_labels
 
-        pop_mask = decision_batch.pop_mask #shape (batch_size,)
+        pop_mask = decision_batch.pop_mask.bool() #shape (batch_size,)
         active_children = state.children.lol[range_batch_size, next_active_nodes] #shape (batch_size, max. number of children)
-        push_all_children_mask = (active_children != 0).long() #shape (batch_size, max. number of children)
-        push_all_children_mask *= pop_mask.unsqueeze(1) # only push those children where we will pop the current node from the top of the stack.
+        push_all_children_mask = (active_children != 0) #shape (batch_size, max. number of children)
+        push_all_children_mask &= pop_mask.unsqueeze(1) # only push those children where we will pop the current node from the top of the stack.
 
-        state.stack.pop_and_push_multiple(active_children, decision_batch.pop_mask, push_all_children_mask, reverse=self.reverse_push_actions)
+        state.stack.pop_and_push_multiple(active_children, pop_mask, push_all_children_mask, reverse=self.reverse_push_actions)
 
