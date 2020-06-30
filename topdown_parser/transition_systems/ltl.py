@@ -519,7 +519,7 @@ class LTL(TransitionSystem):
         #Check if new edge labels are APP or MOD
         #if APP, add respective source to collected apply set.
         sources_used = self.label_id2appsource[decision_batch.edge_labels] #shape (batch_size,)
-        app_mask = decision_batch.push_mask & (sources_used >= 0) #shape (batch_size,)
+        app_mask = decision_batch.push_mask.bool() & (sources_used >= 0) #shape (batch_size,)
         float_apply_mask = make_bool_multipliable(app_mask) # int or bool values, depending on whether we are on CPU or GPU
         state.applyset[range_batch_size, next_active_nodes, sources_used] = ~app_mask * state.applyset[range_batch_size, next_active_nodes, sources_used] + float_apply_mask
         #a = state.applyset.numpy()
@@ -538,7 +538,7 @@ class LTL(TransitionSystem):
         state.constants[range_batch_size, next_active_nodes] = inverse_constant_mask * state.constants[range_batch_size, next_active_nodes] + decision_batch.constant_mask * decision_batch.constants
         state.lex_labels[range_batch_size, next_active_nodes] = inverse_constant_mask*state.lex_labels[range_batch_size, next_active_nodes] + decision_batch.constant_mask * decision_batch.lex_labels
 
-        pop_mask = decision_batch.pop_mask #shape (batch_size,)
+        pop_mask = decision_batch.pop_mask.bool() #shape (batch_size,)
         active_children = state.children.lol[range_batch_size, next_active_nodes] #shape (batch_size, max. number of children)
         push_all_children_mask = (active_children != 0) #shape (batch_size, max. number of children)
         push_all_children_mask &= pop_mask.unsqueeze(1) # only push those children where we will pop the current node from the top of the stack.
