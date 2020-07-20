@@ -94,18 +94,8 @@ class LTL(TransitionSystem):
         self.lextyp2i : Dict[AMType, int] = { AMType.parse_str(l) : i for i, l in enumerate(self.i2lextyp)}
         len_lex_typ = len(self.i2lextyp)
 
-
-        minimal_apply_sets = np.zeros((len_lex_typ, len_labels, len_lex_typ), dtype=np.int32) #shape (parent lexical type, incoming label, lexical type)
-        minimal_apply_sets += 100_000_000 #default value: cannot reach
         lexical2constant = np.zeros((len_lex_typ, self.additional_lexicon.vocab_size("constants")), dtype=np.int32) #shape (lexical type, constant)
         constant2lexical = np.zeros(self.additional_lexicon.vocab_size("constants"), dtype=np.long)
-        apply_set_lookup = np.zeros((len_lex_typ, len_labels, len_lex_typ, len_sources), dtype=np.bool)
-        obligatory_apply_set_lookup = np.zeros((len_lex_typ, len_labels, len_sources, len_lex_typ), dtype=np.bool)
-        # (parent_lex, label, some lex type, s) is true iff for all applysets between the types, s is in the apply set (and there exists an apply set).
-        conditional_obl_sources = np.zeros((len_lex_typ, len_labels, len_lex_typ, len_sources, len_sources), dtype=np.bool)
-        # [parent_lex, label, some_lex, s1, s2] is true iff we choose some_lex and have collected s1 already then s2 becomes obligatory.
-
-        apply_set_exists = np.zeros((len_lex_typ, len_labels, len_lex_typ), dtype=np.bool) #shape (parent lexical type, incoming label, lexical type)
 
         get_term_types = np.zeros((len_lex_typ, len_labels, len_lex_typ), dtype=np.bool) #shape (parent lexical type, incoming label, term type)
         applyset_term_types = np.zeros((len_lex_typ, len_lex_typ, len_sources), dtype=np.bool) # shape (TERM TYPE, lexical type, source)
@@ -140,15 +130,6 @@ class LTL(TransitionSystem):
                 if current_lex_type.is_bot:
                     continue
                 current_typ_id = self.lextyp2i[current_lex_type]
-                applyset_size = 0
-                for source in current_lex_type.nodes():
-                    applyset_size += 1
-                    source_id = self.source2i[source]
-                    apply_set_lookup[parent_id, root_id, current_typ_id, source_id] = True
-                    obligatory_apply_set_lookup[parent_id, root_id, source_id, current_typ_id] = True
-
-                minimal_apply_sets[parent_id, root_id, current_typ_id] = applyset_size
-                apply_set_exists[parent_id, root_id, current_typ_id] = True
                 apply_reachable_term_types[current_typ_id, current_typ_id] = True
 
             # MOD
@@ -162,70 +143,31 @@ class LTL(TransitionSystem):
                     for possible_lexical_type, applyset in apply_reachable_from[t]:
                         current_typ_id = self.lextyp2i[possible_lexical_type]
 
-                        if (current_typ_id, source) not in smallest_apply_set:
-                            smallest_apply_set[(current_typ_id, source) ] = applyset
-                        elif len(applyset) < len(smallest_apply_set[(current_typ_id, source) ]):
-                            smallest_apply_set[(current_typ_id, source)] = applyset
-
-                        apply_set_exists[parent_id, label_id, current_typ_id] = True
                         apply_reachable_term_types[self.lextyp2i[t], current_typ_id] = True
                         for source in applyset:
                             source_id = self.source2i[source]
-                            apply_set_lookup[parent_id, label_id, current_typ_id, source_id] = True
                             applyset_term_types[self.lextyp2i[t], current_typ_id, source_id] = 1
-                            for parent_source in possible_lexical_type.get_parents(source):
-                                conditional_obl_sources[parent_id, label_id, current_typ_id, source_id, self.source2i[parent_source]] = True
 
-                        old_minimal_apply_set = minimal_apply_sets[parent_id, label_id, current_typ_id]
-                        if len(applyset) < old_minimal_apply_set:
-                            minimal_apply_sets[parent_id, label_id, current_typ_id] = len(applyset)
-                            obligatory_apply_set_lookup[parent_id, label_id, :, current_typ_id] = False
-                            for source in applyset:
-                                source_id = self.source2i[source]
-                                obligatory_apply_set_lookup[parent_id, label_id, source_id, current_typ_id] = True
 
             # APP
             for source in parent_lex_typ.nodes():
                 req = parent_lex_typ.get_request(source)
                 label_id = self.additional_lexicon.get_id("edge_labels", "APP_"+source)
-                smallest_apply_set : Dict[int, Set[str]] = dict()
 
                 get_term_types[parent_id, label_id, self.lextyp2i[req]] = True
 
                 for possible_lexical_type, applyset in apply_reachable_from[req]:
                     current_typ_id = self.lextyp2i[possible_lexical_type]
 
-                    if current_typ_id not in smallest_apply_set:
-                        smallest_apply_set[current_typ_id] = applyset
-                    elif len(applyset) < len(smallest_apply_set[current_typ_id]):
-                        smallest_apply_set[current_typ_id] = applyset
-
-                    apply_set_exists[parent_id, label_id, current_typ_id] = True
                     apply_reachable_term_types[self.lextyp2i[req], current_typ_id] = True
                     for source in applyset:
                         source_id = self.source2i[source]
-                        apply_set_lookup[parent_id, label_id, current_typ_id, source_id] = True
                         applyset_term_types[self.lextyp2i[req], current_typ_id, source_id] = 1
-                        for parent_source in possible_lexical_type.get_parents(source):
-                            conditional_obl_sources[parent_id, label_id, current_typ_id, source_id, self.source2i[parent_source]] = True
 
-                    old_minimal_apply_set = minimal_apply_sets[parent_id, label_id, current_typ_id]
-                    if len(applyset) < old_minimal_apply_set:
-                        minimal_apply_sets[parent_id, label_id, current_typ_id] = len(applyset)
-                        obligatory_apply_set_lookup[parent_id, label_id, :, current_typ_id] = False
-                        for source in applyset:
-                            source_id = self.source2i[source]
-                            obligatory_apply_set_lookup[parent_id, label_id, source_id, current_typ_id] = True
 
-        #self.minimal_apply_sets = torch.from_numpy(minimal_apply_sets)
         self.lexical2constant = torch.from_numpy(lexical2constant)
         self.constant2lexical = torch.from_numpy(constant2lexical)
-        self.apply_set_lookup = torch.from_numpy(apply_set_lookup)
-        self.conditional_obl_sources = LookupTensor(conditional_obl_sources,
-                                                    torch.zeros((len_lex_typ, len_sources, len_sources), dtype=torch.bool))
 
-        self.obligatory_apply_set_lookup = torch.from_numpy(obligatory_apply_set_lookup)
-        self.apply_set_exists = torch.from_numpy(apply_set_exists)
         self.app_source2label_id = torch.zeros((len_sources, len_labels), dtype=torch.bool) # maps a source id to the respective (APP) label id
         self.mod_tensor = torch.zeros(len_labels, dtype=torch.bool) #which label ids are MOD_ edge labels?
         self.label_id2appsource = torch.zeros(len_labels, dtype=torch.long)-1
@@ -250,17 +192,13 @@ class LTL(TransitionSystem):
         return DFSChildrenFirst(self.children_order, self.pop_with_0, self.additional_lexicon, self.reverse_push_actions)
 
     def prepare(self, device: Optional[int]):
-        #self.minimal_apply_sets = self.minimal_apply_sets.to(device)
-        self.conditional_obl_sources.to(device)
         self.lexical2constant = make_bool_multipliable(self.lexical2constant.to(device))
         self.constant2lexical = self.constant2lexical.to(device)
-        self.apply_set_exists = self.apply_set_exists.to(device)
+
         self.app_source2label_id = make_bool_multipliable(self.app_source2label_id.to(device))
         self.mod_tensor = self.mod_tensor.to(device)
         self.label_id2appsource = self.label_id2appsource.to(device)
 
-        self.apply_set_lookup = make_bool_multipliable(self.apply_set_lookup.to(device))
-        self.obligatory_apply_set_lookup = self.obligatory_apply_set_lookup.to(device)
         self.applyset_term_types = make_bool_multipliable(self.applyset_term_types.to(device))
         self.get_term_types = self.get_term_types.to(device)
         self.apply_reachable_term_types = self.apply_reachable_term_types.to(device)
@@ -395,52 +333,24 @@ class LTL(TransitionSystem):
         possible_term_types = self.get_term_types[lexical_type_parent, incoming_labels] #shape (batch_size, term types)
         assert possible_term_types.shape == (batch_size, len(self.lextyp2i))
 
-        A = self.apply_set_lookup[lexical_type_parent, incoming_labels]
-        # A takes into account the set of term types of the currently active nodes
-        # and tells us for each lexical type and source whether that source is in the apply set from the lexical type
-        # to one of the term types that the current node can have.
-        assert A.shape == (batch_size, len(self.lextyp2i), len(self.i2source))
-        At = A.transpose(1, 2) #shape (batch_size, sources, lexical types)
-        obligatory_apply_set = self.obligatory_apply_set_lookup[lexical_type_parent, incoming_labels] #shape (batch_size, sources, lexical types)
-        # obligatory_apply_set can also be computed using term types
+        overlap = torch.einsum("tls, bs -> btl", self.applyset_term_types, applyset) #shape (batch_size, term_type, lexical)
+        overlap -= 10_000_000 * ~(self.apply_reachable_term_types.unsqueeze(0) * possible_term_types.unsqueeze(2))
+        #mask out combinations that are not possible
+        # either because the combination is not apply-reachable
+        # or because the term type is not allowed here.
 
-        conditionally_obl_sources = make_bool_multipliable(self.conditional_obl_sources.index(lexical_type_parent.cpu().numpy(), incoming_labels.cpu().numpy())) #shape (batch_size, lexical types, sources, sources)
-        #conditionally_obl_sources = make_bool_multipliable(self.conditional_obl_sources[lexical_type_parent, incoming_labels]) #shape (batch_size, lexical types, sources, sources)
+        set_size = applyset.sum(dim=1)
+        consistent_term_type_lex_type_combos = are_eq(overlap, set_size.unsqueeze(1).unsqueeze(2)) #shape (batch_size, term_type, lexical)
+        # is the collected apply set a subset of the actual apply set?
 
-        apply_set_exists = self.apply_set_exists[lexical_type_parent, incoming_labels] #shape (batch_size, lexical types, )
-        #minimal_apply_set_size = self.minimal_apply_sets[lexical_type_parent, incoming_labels] #shape (batch_size, lexical type,) with apply set size
+        #                            (term type, lexical, source)
+        can_finish_now = are_eq(self.applyset_term_types.sum(dim=2), overlap) #shape (batch_size, term_type, lexical)
+        # containing the information whether the actual apply set is a subset of the collected apply set
 
+        can_finish_now &= consistent_term_type_lex_type_combos  #shape (batch_size, lexical types)
+        can_finish_now = torch.any(can_finish_now, dim=1)
 
-        # which sources have become obligatory because of our choices made so far (collected apply set)?
-        # and how many sources are those?
-        cond_ob = torch.einsum("blso, bs -> blo", conditionally_obl_sources, applyset) > 0 #shape (batch_size, lexical types, sources/set capacity)
-        total_obligatory = cond_ob.transpose(1, 2) | obligatory_apply_set #shape (batch_size, sources, lexical types)
-        minimal_apply_set_size = total_obligatory.sum(dim=1) #shape (batch_size, lexical types)
-
-        set_size = applyset.sum(dim=1) #shape (batch_size,)
-        #result = torch.einsum("bs, bsl -> bl", batched_set, mapping)
-        batched_set_unsq = applyset.unsqueeze(1)
-        result = (torch.bmm(batched_set_unsq, At)).squeeze(1) #shape (batch_size, "lexical types")
-        obligatory_sources_collected = (torch.bmm(batched_set_unsq, make_bool_multipliable(total_obligatory))).squeeze(1) #shape (batch_size, "lexical types")
-        # number of obligatory sources that we have already.
-
-        consistent_lex_types = are_eq(result, set_size.unsqueeze(1)) #shape (batch_size, "lexical types")
-        # OK but does not take into account that not every pair of types is apply-reachable, so find lexical types that are apply reachable to our
-        # set of term types
-        consistent_lex_types &= apply_set_exists
-
-        can_finish_now = consistent_lex_types & (obligatory_sources_collected >= minimal_apply_set_size)
-
-        #can_finish_now, consistent_lex_types, obligatory_sources_collected, total_obligatory, minimal_apply_set_size = consistent_with_and_can_finish_now(applyset, At, apply_set_exists, obligatory_apply_set, conditionally_obl_sources) #both have shape (batch_size, lexical types) and are bool tensors
         assert can_finish_now.shape == (batch_size, len(self.lextyp2i))
-        assert total_obligatory.shape == (batch_size, len(self.i2source), len(self.lextyp2i))
-        assert minimal_apply_set_size.shape == (batch_size, len(self.lextyp2i))
-
-
-        # TEST, there always has to be at least one lexical type that is consistent with what we have done.
-        if self.enable_assert:
-            assert torch.all((torch.sum(consistent_lex_types, dim=1) >= 1) | done)
-        # TEST
 
         # we can potentially close the current node
         # if a) the stack is not empty already
@@ -491,22 +401,15 @@ class LTL(TransitionSystem):
         # How many sources do we still need for a certain term type / lexical type combination?
 
         # which combination of term type/lexical type does still work here?
-        valid_term_type_lex_type_combos = num_todo_sources <= state.w_c.unsqueeze(1).unsqueeze(2) #shape (batch_size, term type, lexical type)
-        # This still includes combinations that are not OK because
-        # (i) the lexical type is not consistent
-        # (ii) a term type cannot be reached from a certain lexical type
-        # [b,t,l] = [b,t,l] * [b,t] * [b,l] * [t,l]
-        valid_term_type_lex_type_combos = valid_term_type_lex_type_combos * consistent_lex_types.unsqueeze(1) * possible_term_types.unsqueeze(2) \
-                                       * self.apply_reachable_term_types.unsqueeze(0)
-        #valid_term_type_lex_type_combos = torch.einsum("blt -> btl, bl, bt", valid_term_type_lex_type_combos, consistent_lex_types, possible_term_types)
-        assert valid_term_type_lex_type_combos.shape == (batch_size, len(self.lextyp2i), len(self.lextyp2i))
+        consistent_term_type_lex_type_combos *= num_todo_sources <= state.w_c.unsqueeze(1).unsqueeze(2) #shape (batch_size, term type, lexical type)
+        assert consistent_term_type_lex_type_combos.shape == (batch_size, len(self.lextyp2i), len(self.lextyp2i))
 
-        num_todo_sources = num_todo_sources + 10_000_000 * (~valid_term_type_lex_type_combos) #shape (batch_size, term type, lexical type)
+        num_todo_sources = num_todo_sources + 10_000_000 * (~consistent_term_type_lex_type_combos) #shape (batch_size, term type, lexical type)
         #exclude things that are not possible
         o_c, _ = torch.min(torch.min(num_todo_sources,dim=1)[0], dim=1)
         assert o_c.shape == (batch_size, )
 
-        possible_app_sources = torch.einsum("btl, tls -> bs", make_bool_multipliable(valid_term_type_lex_type_combos),
+        possible_app_sources = torch.einsum("btl, tls -> bs", make_bool_multipliable(consistent_term_type_lex_type_combos),
                                             self.applyset_term_types) > 0
 
         #  mask out all sources that have been used already
@@ -555,7 +458,7 @@ class LTL(TransitionSystem):
         state.heads[range_batch_size, decision_batch.push_tokens] = inverse_push_mask*state.heads[range_batch_size, decision_batch.push_tokens] + decision_batch.push_mask * next_active_nodes
         state.edge_labels[range_batch_size, decision_batch.push_tokens] = inverse_push_mask*state.edge_labels[range_batch_size, decision_batch.push_tokens] + decision_batch.push_mask * decision_batch.edge_labels
 
-        # state.edge_labels_readable = [ [self.additional_lexicon.get_str_repr("edge_labels", e) for e in batch] for batch in state.edge_labels.numpy()]
+        state.edge_labels_readable = [ [self.additional_lexicon.get_str_repr("edge_labels", e) for e in batch] for batch in state.edge_labels.numpy()]
         #Check if new edge labels are APP or MOD
         #if APP, add respective source to collected apply set.
         sources_used = self.label_id2appsource[decision_batch.edge_labels] #shape (batch_size,)
