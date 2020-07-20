@@ -81,31 +81,7 @@ def consistent_with_and_can_finish_now(batched_set: torch.BoolTensor, mapping: t
     1.) R_1[b,l] = True iff R_2[b,l] AND at sum_s[ (batched_set[b,s] AND mapping[b,s,l]) ] >= minimal_apply_set_size[b,l]
     2.) R_2[b,l] = True iff \forall s, batched_set[b,s] -> mapping[b, s, l] AND apply_set_exists[b,l]
     """
-    # which sources have become obligatory because of our choices made so far (collected apply set)?
-    # and how many sources are those?
-    cond_ob = torch.einsum("blso, bs -> blo", conditionally_obligatory, batched_set) > 0 #shape (batch_size, lexical types, sources/set capacity)
-    total_obligatory = cond_ob.transpose(1, 2) | obligatory_apply_set #shape (batch_size, set capacity, lexical types)
-    minimal_apply_set_size = total_obligatory.sum(dim=1) #shape (batch_size, lexical types)
-
-    set_size = batched_set.sum(dim=1) #shape (batch_size,)
-    #result = torch.einsum("bs, bsl -> bl", batched_set, mapping)
-    batched_set_unsq = batched_set.unsqueeze(1)
-    result = (torch.bmm(batched_set_unsq, mapping)).squeeze(1) #shape (batch_size, "lexical types")
-    r2 = (torch.bmm(batched_set_unsq, make_bool_multipliable(total_obligatory))).squeeze(1) #shape (batch_size, "lexical types")
-    # number of obligatory sources that we have already.
-
-    #s = obligatory_apply_set.sum(dim=1) #shape (batch_size, "lexical types",), contains the size of the apply set for each lexical type
-
-    consistent = are_eq(result, set_size.unsqueeze(1)) #shape (batch_size, "lexical types")
-    # OK but does not take into account that not every pair of types is apply-reachable, so find lexical types that are apply reachable to our
-    # set of term types
-    consistent &= apply_set_exists
-
-    #can_finish_now = consistent & (result >= minimal_apply_set_size)
-    can_finish_now = consistent & (r2 >= minimal_apply_set_size)
-    #can_finish_now = consistent & are_eq(result, s)
-
-    return can_finish_now, consistent, r2, total_obligatory, minimal_apply_set_size
+    raise NotImplementedError()
 
 def debug_to_set(t : torch.BoolTensor) -> Set[int]:
     return [{ i for i,x in enumerate(batch) if x} for batch in t.numpy()]
