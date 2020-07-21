@@ -203,6 +203,8 @@ class LTL(TransitionSystem):
         self.get_term_types = self.get_term_types.to(device)
         self.apply_reachable_term_types = self.apply_reachable_term_types.to(device)
 
+        self.apply_set_size = self.applyset_term_types.sum(dim=2) #shape (term types, lexical types)
+
 
     def guarantees_well_typedness(self) -> bool:
         return True
@@ -339,12 +341,11 @@ class LTL(TransitionSystem):
         # either because the combination is not apply-reachable
         # or because the term type is not allowed here.
 
-        set_size = applyset.sum(dim=1)
-        consistent_term_type_lex_type_combos = are_eq(overlap, set_size.unsqueeze(1).unsqueeze(2)) #shape (batch_size, term_type, lexical)
+        apply_set_size = applyset.sum(dim=1)
+        consistent_term_type_lex_type_combos = are_eq(overlap, apply_set_size.unsqueeze(1).unsqueeze(2)) #shape (batch_size, term_type, lexical)
         # is the collected apply set a subset of the actual apply set?
 
-        #                            (term type, lexical, source)
-        can_finish_now = are_eq(self.applyset_term_types.sum(dim=2), overlap) #shape (batch_size, term_type, lexical)
+        can_finish_now = are_eq(self.apply_set_size, overlap) #shape (batch_size, term_type, lexical)
         # containing the information whether the actual apply set is a subset of the collected apply set
 
         can_finish_now &= consistent_term_type_lex_type_combos  #shape (batch_size, lexical types)
@@ -391,29 +392,29 @@ class LTL(TransitionSystem):
         # Edge labels
 
         # We create masks for what edges are appropriate
-        # MOD: all MOD_x edges are allowed provided that W_c - O_c >= 1
 
-        # Which sources do we still have to cover for any term type / lexical type combination?
-        todo_sources = (self.applyset_term_types.unsqueeze(0) - applyset.unsqueeze(1).unsqueeze(2)) > 0
-        assert todo_sources.shape == (batch_size, len(self.lextyp2i), len(self.lextyp2i), len(self.source2i))
-        #                                             term type           lexical type
-        num_todo_sources = todo_sources.sum(3) #shape (batch_size, term type, lexical type)
         # How many sources do we still need for a certain term type / lexical type combination?
+
+        #                     (term type, lexical type)       (bs,)
+        num_todo_sources = self.apply_set_size.unsqueeze(0) - apply_set_size.unsqueeze(1).unsqueeze(2) #shape (batch_size, term type, lexical type)
+        # This uses the fact that |X - Y| = |X| - |Y| if Y is a subset of X, we catch the case ~(Y not subset of X) by considering only consistent combinations!
 
         # which combination of term type/lexical type does still work here?
         consistent_term_type_lex_type_combos *= num_todo_sources <= state.w_c.unsqueeze(1).unsqueeze(2) #shape (batch_size, term type, lexical type)
         assert consistent_term_type_lex_type_combos.shape == (batch_size, len(self.lextyp2i), len(self.lextyp2i))
 
-        num_todo_sources = num_todo_sources + 10_000_000 * (~consistent_term_type_lex_type_combos) #shape (batch_size, term type, lexical type)
+        num_todo_sources += 10_000_000 * (~consistent_term_type_lex_type_combos) #shape (batch_size, term type, lexical type)
         #exclude things that are not possible
-        o_c, _ = torch.min(torch.min(num_todo_sources,dim=1)[0], dim=1)
-        assert o_c.shape == (batch_size, )
 
         possible_app_sources = torch.einsum("btl, tls -> bs", make_bool_multipliable(consistent_term_type_lex_type_combos),
                                             self.applyset_term_types) > 0
 
         #  mask out all sources that have been used already
         possible_app_sources &= ~applyset.bool()
+
+        # MOD: all MOD_x edges are allowed provided that W_c - O_c >= 1
+        o_c, _ = torch.min(torch.min(num_todo_sources,dim=1)[0], dim=1)
+        assert o_c.shape == (batch_size, )
 
         if self.enable_assert:
             assert torch.all((o_c <= state.w_c) | done)
