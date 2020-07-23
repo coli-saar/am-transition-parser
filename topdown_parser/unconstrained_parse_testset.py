@@ -72,7 +72,7 @@ if __name__ == "__main__":
         model.k_best = beam_size
 
         for i in range(len(parse_test.system_inputs)):
-            filename = args.archive_file+f"/test_{parse_test.names[i]}_k_{beam_size}.txt"
+            filename = args.archive_file+f"/unconstrained_test_{parse_test.names[i]}_k_{beam_size}.txt"
             annotator.annotate_file(model, parse_test.system_inputs[i], filename)
             cumulated_parse_time = 0.0
             well_typed = 0
