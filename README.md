@@ -1,2 +1,2 @@
 # topdown-parser
-A topdown dependency parser.
+A top-down transition-based AM dependency parser.
