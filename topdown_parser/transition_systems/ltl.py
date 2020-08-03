@@ -94,7 +94,7 @@ class LTL(TransitionSystem):
         self.lextyp2i : Dict[AMType, int] = { AMType.parse_str(l) : i for i, l in enumerate(self.i2lextyp)}
         len_lex_typ = len(self.i2lextyp)
 
-        lexical2constant = np.zeros((len_lex_typ, self.additional_lexicon.vocab_size("constants")), dtype=np.int32) #shape (lexical type, constant)
+        lexical2constant = np.zeros((len_lex_typ, self.additional_lexicon.vocab_size("constants")), dtype=np.bool) #shape (lexical type, constant)
         constant2lexical = np.zeros(self.additional_lexicon.vocab_size("constants"), dtype=np.long)
 
         get_term_types = np.zeros((len_lex_typ, len_labels, len_lex_typ), dtype=np.bool) #shape (parent lexical type, incoming label, term type)
@@ -356,7 +356,7 @@ class LTL(TransitionSystem):
         # we can potentially close the current node
         # if a) the stack is not empty already
         # and b) there is lexical type for our apply set and set of term types
-        finishable = tensor_or(can_finish_now, dim=1) #shape (batch_size,)
+        finishable = torch.any(can_finish_now, dim=1) #shape (batch_size,)
         assert finishable.shape == (batch_size, )
         if self.pop_with_0:
             mask[batch_range, 0] &= (depth > 0)
@@ -406,8 +406,9 @@ class LTL(TransitionSystem):
         num_todo_sources += 10_000_000 * (~consistent_term_type_lex_type_combos) #shape (batch_size, term type, lexical type)
         #exclude things that are not possible
 
-        possible_app_sources = torch.einsum("btl, tls -> bs", make_bool_multipliable(consistent_term_type_lex_type_combos),
-                                            self.applyset_term_types) > 0
+        #possible_app_sources = torch.einsum("btl, tls -> bs", make_bool_multipliable(consistent_term_type_lex_type_combos),
+        #                                    self.applyset_term_types) > 0
+        possible_app_sources = torch.any(torch.any(consistent_term_type_lex_type_combos.unsqueeze(3) * self.applyset_term_types.unsqueeze(0).bool(), dim=1), dim=1)
 
         #  mask out all sources that have been used already
         possible_app_sources &= ~applyset.bool()
