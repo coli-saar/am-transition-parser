@@ -1,27 +1,24 @@
-import itertools
-from dataclasses import dataclass
-from typing import List, Iterable, Optional, Any, Dict, Set, Tuple, Type
+from typing import List, Iterable, Optional, Any, Dict, Set, Tuple
 
 import numpy as np
 import torch
-from tqdm import tqdm
 
 from topdown_parser.am_algebra import AMType
-from topdown_parser.am_algebra.new_amtypes import ModCache, combinations
+from topdown_parser.am_algebra.new_amtypes import ModCache
 from topdown_parser.am_algebra.tree import Tree
 from topdown_parser.dataset_readers.AdditionalLexicon import AdditionalLexicon
 from topdown_parser.dataset_readers.amconll_tools import AMSentence
-from topdown_parser.datastructures.list_of_list import BatchedListofList
-from topdown_parser.datastructures.stack import BatchedStack
+from topdown_parser.transition_systems.gpu_parsing.datastructures.list_of_list import BatchedListofList
+from topdown_parser.transition_systems.gpu_parsing.datastructures.stack import BatchedStack
 from topdown_parser.nn.utils import get_device_id
-from topdown_parser.transition_systems.dfs_children_first import DFSChildrenFirst
-from topdown_parser.transition_systems.logic_torch import consistent_with_and_can_finish_now, tensor_or, index_OR, \
-    batched_index_OR, debug_to_set, make_bool_multipliable, LookupTensor, are_eq
-from topdown_parser.transition_systems.parsing_state import BatchedParsingState
-from topdown_parser.transition_systems.transition_system import TransitionSystem, Decision, DecisionBatch
+from topdown_parser.transition_systems.gpu_parsing.dfs_children_first import GPUDFSChildrenFirst
+from topdown_parser.transition_systems.gpu_parsing.logic_torch import index_OR, \
+    make_bool_multipliable, are_eq
+from topdown_parser.transition_systems.gpu_parsing.parsing_state import BatchedParsingState
+from topdown_parser.transition_systems.gpu_parsing.transition_system import GPUTransitionSystem, Decision, DecisionBatch
 
 
-class LTLState(BatchedParsingState):
+class GPULTLState(BatchedParsingState):
 
     def __init__(self,  decoder_state: Any,
                 sentences: List[AMSentence],
@@ -49,7 +46,7 @@ class LTLState(BatchedParsingState):
         :param lex_types: shape (batch_size, sent length)
         :param applyset: shape (batch_size, sent length, number of sources), belongs to currently active nodes
         """
-        super(LTLState, self).__init__(decoder_state, sentences, stack, children, heads, edge_labels, constants, None, lex_labels, lexicon)
+        super(GPULTLState, self).__init__(decoder_state, sentences, stack, children, heads, edge_labels, constants, None, lex_labels, lexicon)
         self.lex_types = lex_types
         self.applyset = applyset
         self.step = 0
@@ -58,8 +55,8 @@ class LTLState(BatchedParsingState):
     def is_complete(self) -> torch.Tensor:
         return torch.all(self.stack.is_empty())
 
-@TransitionSystem.register("ltl")
-class LTL(TransitionSystem):
+@GPUTransitionSystem.register("ltl")
+class GPULTL(GPUTransitionSystem):
     """
     DFS where when a node is visited for the second time, all its children are visited once.
     Afterwards, the first child is visited for the second time. Then the second child etc.
@@ -184,12 +181,12 @@ class LTL(TransitionSystem):
             self.label_id2appsource[label_id] = source_id
             self.app_source2label_id[source_id, label_id] = True
 
-    def get_unconstrained_version(self) -> "TransitionSystem":
+    def get_unconstrained_version(self) -> "GPUTransitionSystem":
         """
         Return an unconstrained version that does not do type checking.
         :return:
         """
-        return DFSChildrenFirst(self.children_order, self.pop_with_0, self.additional_lexicon, self.reverse_push_actions)
+        return GPUDFSChildrenFirst(self.children_order, self.pop_with_0, self.additional_lexicon, self.reverse_push_actions)
 
     def prepare(self, device: Optional[int]):
         self.lexical2constant = make_bool_multipliable(self.lexical2constant.to(device))
@@ -270,21 +267,21 @@ class LTL(TransitionSystem):
                all(x.fragment == y.fragment and x.typ == y.typ for x, y in zip(gold_sentence, predicted))
 
 
-    def initial_state(self, sentences : List[AMSentence], decoder_state : Any, device: Optional[int] = None) -> LTLState:
+    def initial_state(self, sentences : List[AMSentence], decoder_state : Any, device: Optional[int] = None) -> GPULTLState:
         max_len = max(len(s) for s in sentences)+1
         batch_size = len(sentences)
         stack = BatchedStack(batch_size, max_len+2, device=device)
         stack.push(torch.zeros(batch_size, dtype=torch.long, device=device), torch.ones(batch_size, dtype=torch.long, device=device))
-        return LTLState(decoder_state, sentences, stack,
-                                     BatchedListofList(batch_size, max_len, max_len, device=device),
-                                     torch.zeros(batch_size, max_len, device=device, dtype=torch.long)-1, #heads
-                                     torch.zeros(batch_size, max_len, device=device, dtype=torch.long), #labels
-                                     torch.zeros(batch_size, max_len, device=device, dtype=torch.long)-1, #constants
-                                     torch.zeros(batch_size, max_len, device=device, dtype=torch.long), #lex labels
-                                     self.additional_lexicon,
-                                     torch.zeros(batch_size, max_len, device=device, dtype=torch.long)-1, #lexical types
-                                     make_bool_multipliable(torch.zeros((batch_size, max_len, len(self.i2source)), device=device, dtype=torch.bool)), #apply set
-                                     )
+        return GPULTLState(decoder_state, sentences, stack,
+                           BatchedListofList(batch_size, max_len, max_len, device=device),
+                           torch.zeros(batch_size, max_len, device=device, dtype=torch.long) - 1,  #heads
+                           torch.zeros(batch_size, max_len, device=device, dtype=torch.long),  #labels
+                           torch.zeros(batch_size, max_len, device=device, dtype=torch.long) - 1,  #constants
+                           torch.zeros(batch_size, max_len, device=device, dtype=torch.long),  #lex labels
+                           self.additional_lexicon,
+                           torch.zeros(batch_size, max_len, device=device, dtype=torch.long) - 1,  #lexical types
+                           make_bool_multipliable(torch.zeros((batch_size, max_len, len(self.i2source)), device=device, dtype=torch.bool)),  #apply set
+                           )
         # decoder_state: Any
         # sentences : List[AMSentence]
         # stack: BatchedStack
@@ -295,7 +292,7 @@ class LTL(TransitionSystem):
         # lex_labels : torch.Tensor #shape (batch_size, input_seq_len)
         # lexicon : AdditionalLexicon
 
-    def make_decision(self, scores: Dict[str, torch.Tensor], state : LTLState) -> DecisionBatch:
+    def make_decision(self, scores: Dict[str, torch.Tensor], state : GPULTLState) -> DecisionBatch:
         children_scores = scores["children_scores"] #shape (batch_size, input_seq_len)
         batch_size, input_seq_len = children_scores.shape
         parent_mask = state.parent_mask()
@@ -444,7 +441,7 @@ class LTL(TransitionSystem):
 
 
 
-    def step(self, state: LTLState, decision_batch: DecisionBatch) -> None:
+    def step(self, state: GPULTLState, decision_batch: DecisionBatch) -> None:
         """
         Applies a decision to a parsing state.
         :param state:

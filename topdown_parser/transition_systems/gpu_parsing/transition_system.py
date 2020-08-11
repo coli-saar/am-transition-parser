@@ -5,11 +5,9 @@ import torch
 from allennlp.common import Registrable
 
 from topdown_parser.am_algebra import AMType
-from topdown_parser.dataset_readers.AdditionalLexicon import AdditionalLexicon, Lexicon
+from topdown_parser.dataset_readers.AdditionalLexicon import AdditionalLexicon
 from topdown_parser.dataset_readers.amconll_tools import AMSentence
-from topdown_parser.nn.EdgeLabelModel import EdgeLabelModel
-from topdown_parser.nn.utils import get_device_id
-from topdown_parser.transition_systems.parsing_state import BatchedParsingState
+from topdown_parser.transition_systems.gpu_parsing.parsing_state import BatchedParsingState
 
 
 @dataclass(frozen=True)
@@ -59,7 +57,7 @@ class DecisionBatch:
                              self.constant_mask.to(device))
 
 
-class TransitionSystem(Registrable):
+class GPUTransitionSystem(Registrable):
 
     def __init__(self, additional_lexicon : AdditionalLexicon):
         self.additional_lexicon = additional_lexicon
@@ -144,7 +142,7 @@ class TransitionSystem(Registrable):
         return True
         #raise NotImplementedError()
 
-    def get_unconstrained_version(self) -> "TransitionSystem":
+    def get_unconstrained_version(self) -> "GPUTransitionSystem":
         """
         Return an unconstrained version that does not do type checking.
         :return:

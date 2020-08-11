@@ -1,101 +1,90 @@
-from copy import deepcopy
-from dataclasses import dataclass
-from typing import List, Iterable, Optional, Tuple, Dict, Any, Set
+from typing import List, Iterable, Optional, Tuple, Dict, Any
 
 import torch
 
 from topdown_parser.am_algebra.tree import Tree
 from topdown_parser.dataset_readers.AdditionalLexicon import AdditionalLexicon
 from topdown_parser.dataset_readers.amconll_tools import AMSentence
-from topdown_parser.datastructures.list_of_list import BatchedListofList
-from topdown_parser.datastructures.stack import BatchedStack
-from topdown_parser.nn.EdgeLabelModel import EdgeLabelModel
-from topdown_parser.nn.utils import get_device_id
-from topdown_parser.transition_systems.parsing_state import CommonParsingState, BatchedParsingState
-from topdown_parser.transition_systems.transition_system import TransitionSystem, Decision, DecisionBatch
-#from topdown_parser.transition_systems.parsing_state import get_parent, get_siblings
-#from topdown_parser.transition_systems.unconstrained_system import UnconstrainedTransitionSystem
-from topdown_parser.transition_systems.utils import scores_to_selection, single_score_to_selection
+from topdown_parser.transition_systems.gpu_parsing.parsing_state import BatchedParsingState, BatchedStack, \
+    BatchedListofList
+from topdown_parser.transition_systems.gpu_parsing.transition_system import GPUTransitionSystem, Decision, DecisionBatch
 
 
-class DFSChildrenFirstState(BatchedParsingState):
+class GPUDFSState(BatchedParsingState):
 
     def is_complete(self) -> torch.Tensor:
         return torch.all(self.stack.is_empty())
 
-@TransitionSystem.register("dfs-children-first")
-class DFSChildrenFirst(TransitionSystem):
-    """
-    DFS where when a node is visited for the second time, all its children are visited once.
-    Afterwards, the first child is visited for the second time. Then the second child etc.
-    """
 
-    def __init__(self, children_order: str, pop_with_0: bool,
-                 additional_lexicon: AdditionalLexicon,
-                 reverse_push_actions: bool = False):
+
+
+@GPUTransitionSystem.register("dfs")
+class GPUDFS(GPUTransitionSystem):
+
+    def __init__(self, children_order: str, pop_with_0: bool, additional_lexicon : AdditionalLexicon):
         """
         Select children_order : "LR" (left to right) or "IO" (inside-out, recommended by Ma et al.)
-        reverse_push_actions means that the order of push actions is the opposite order in which the children of
-        the node are recursively visited.
         """
         super().__init__(additional_lexicon)
-        self.pop_with_0=pop_with_0
-        self.reverse_push_actions = reverse_push_actions
-        assert children_order in ["LR", "IO", "RL"], "unknown children order"
+        self.pop_with_0 = pop_with_0
+        assert children_order in ["LR", "IO"], "unknown children order"
 
         self.children_order = children_order
 
     def guarantees_well_typedness(self) -> bool:
         return False
 
-    def get_unconstrained_version(self) -> "TransitionSystem":
+    def get_unconstrained_version(self) -> "GPUTransitionSystem":
         """
         Return an unconstrained version that does not do type checking.
         :return:
         """
         return self
 
-    def _construct_seq(self, tree: Tree) -> List[Decision]:
+    def _construct_seq(self, tree: Tree, is_first_child : bool, parent_type : Tuple[str, str], parent_lex_label : str) -> List[Decision]:
         own_position = tree.node[0]
-        push_actions = []
-        recursive_actions = []
-
-        if self.children_order == "LR":
-            children = tree.children
-        elif self.children_order == "RL":
-            children = reversed(tree.children)
-        elif self.children_order == "IO":
-            left_part = []
-            right_part = []
-            for child in tree.children:
-                if child.node[0] < own_position:
-                    left_part.append(child)
-                else:
-                    right_part.append(child)
-            children = list(reversed(left_part)) + right_part
-        else:
-            raise ValueError("Unknown children order: "+self.children_order)
-
-        for child in children:
+        to_left = []
+        to_right = []
+        for child in tree.children:
             if child.node[1].label == "IGNORE":
                 continue
 
-            push_actions.append(Decision(child.node[0], False, child.node[1].label, ("", ""), ""))
-            recursive_actions.extend(self._construct_seq(child))
+            if child.node[0] < own_position:
+                to_left.append(child)
+            else:
+                to_right.append(child)
 
-        if self.pop_with_0:
-            relevant_position = 0
+        if is_first_child:
+            beginning = [Decision(own_position, False, tree.node[1].label, parent_type, parent_lex_label)]
         else:
-            relevant_position = own_position
+            beginning = [Decision(own_position, False, tree.node[1].label, ("", ""), "")]
 
-        if self.reverse_push_actions:
-            push_actions = list(reversed(push_actions))
+        if self.children_order == "LR":
+            children = to_left + to_right
+        elif self.children_order == "IO":
+            children = list(reversed(to_left)) + to_right
+        else:
+            raise ValueError("Unknown children order: " + self.children_order)
 
-        return push_actions + [Decision(relevant_position, True, "", (tree.node[1].fragment, tree.node[1].typ), tree.node[1].lexlabel)] + recursive_actions
+        ret = beginning
+        for i, child in enumerate(children):
+            ret.extend(self._construct_seq(child, i == 0, (tree.node[1].fragment, tree.node[1].typ), tree.node[1].lexlabel))
+
+        last_position = 0 if self.pop_with_0 else own_position
+        if len(tree.children) == 0:
+            #This subtree has no children, thus also no first child at which we would determine the type of the parent
+            #Let's determine the type now.
+            last_decision = Decision(last_position, True, "", (tree.node[1].fragment, tree.node[1].typ),
+                                     tree.node[1].lexlabel)
+        else:
+            last_decision = Decision(last_position, True, "", ("",""), "")
+        ret.append(last_decision)
+        return ret
+
 
     def get_order(self, sentence: AMSentence) -> Iterable[Decision]:
         t = Tree.from_am_sentence(sentence)
-        r = [Decision(t.node[0], False, t.node[1].label, ("", ""), "")] + self._construct_seq(t)
+        r = self._construct_seq(t, False, ("",""),"")
         return r
 
     def check_correct(self, gold_sentence : AMSentence, predicted : AMSentence) -> bool:
@@ -103,20 +92,19 @@ class DFSChildrenFirst(TransitionSystem):
                all(x.label == y.label for x, y in zip(gold_sentence, predicted)) and \
                all(x.fragment == y.fragment and x.typ == y.typ for x, y in zip(gold_sentence, predicted))
 
-
-    def initial_state(self, sentences : List[AMSentence], decoder_state : Any, device: Optional[int] = None) -> DFSChildrenFirstState:
+    def initial_state(self, sentences : List[AMSentence], decoder_state : Any, device: Optional[int] = None) -> GPUDFSState:
         max_len = max(len(s) for s in sentences)+1
         batch_size = len(sentences)
         stack = BatchedStack(batch_size, max_len+2, device=device)
         stack.push(torch.zeros(batch_size, dtype=torch.long, device=device), torch.ones(batch_size, dtype=torch.long, device=device))
-        return DFSChildrenFirstState(decoder_state, sentences, stack,
-                        BatchedListofList(batch_size, max_len, max_len, device=device),
-                        torch.zeros(batch_size, max_len, device=device, dtype=torch.long)-1, #heads
-                        torch.zeros(batch_size, max_len, device=device, dtype=torch.long), #labels
-                        torch.zeros(batch_size, max_len, device=device, dtype=torch.long)-1, #constants
-                        torch.zeros(batch_size, max_len, device=device, dtype=torch.long), # term_types
-                        torch.zeros(batch_size, max_len, device=device, dtype=torch.long), #lex labels
-                        self.additional_lexicon)
+        return GPUDFSState(decoder_state, sentences, stack,
+                           BatchedListofList(batch_size, max_len, max_len, device=device),
+                           torch.zeros(batch_size, max_len, device=device, dtype=torch.long) - 1,  #heads
+                           torch.zeros(batch_size, max_len, device=device, dtype=torch.long),  #labels
+                           torch.zeros(batch_size, max_len, device=device, dtype=torch.long) - 1,  #constants
+                           torch.zeros(batch_size, max_len, device=device, dtype=torch.long),  # term_types
+                           torch.zeros(batch_size, max_len, device=device, dtype=torch.long),  #lex labels
+                           self.additional_lexicon)
         # decoder_state: Any
         # sentences : List[AMSentence]
         # stack: BatchedStack
@@ -156,11 +144,14 @@ class DFSChildrenFirst(TransitionSystem):
 
         edge_labels = torch.argmax(scores["all_labels_scores"][state.stack.batch_range, selected_nodes], 1)
         constants = torch.argmax(scores["constants_scores"], 1)
-        lex_labels = scores["lex_labels"]
+        lex_labels = scores["lex_labels"]  # torch.argmax(scores["lex_labels_scores"], 1)
+        term_types = torch.argmax(scores["term_types_scores"], 1)
 
-        return DecisionBatch(selected_nodes, push_mask, pop_mask, edge_labels, constants, None, lex_labels, pop_mask)
+        constant_mask = state.constant_mask()[state.stack.batch_range, active_nodes]
+        constant_mask *= not_done
+        return DecisionBatch(selected_nodes, push_mask, pop_mask, edge_labels, constants, term_types, lex_labels, constant_mask)
 
-    def step(self, state: DFSChildrenFirstState, decision_batch: DecisionBatch) -> None:
+    def step(self, state: BatchedParsingState, decision_batch: DecisionBatch) -> None:
         """
         Applies a decision to a parsing state.
         :param state:
@@ -171,18 +162,11 @@ class DFSChildrenFirst(TransitionSystem):
         state.children.append(next_active_nodes, decision_batch.push_tokens, decision_batch.push_mask)
         range_batch_size = state.stack.batch_range
         inverse_push_mask = (1-decision_batch.push_mask.long())
-
         state.heads[range_batch_size, decision_batch.push_tokens] = inverse_push_mask*state.heads[range_batch_size, decision_batch.push_tokens] + decision_batch.push_mask * next_active_nodes
         state.edge_labels[range_batch_size, decision_batch.push_tokens] = inverse_push_mask*state.edge_labels[range_batch_size, decision_batch.push_tokens] + decision_batch.push_mask * decision_batch.edge_labels
-
         inverse_constant_mask = (1-decision_batch.constant_mask.long())
         state.constants[range_batch_size, next_active_nodes] = inverse_constant_mask * state.constants[range_batch_size, next_active_nodes] + decision_batch.constant_mask * decision_batch.constants
         state.lex_labels[range_batch_size, next_active_nodes] = inverse_constant_mask*state.lex_labels[range_batch_size, next_active_nodes] + decision_batch.constant_mask * decision_batch.lex_labels
 
-        pop_mask = decision_batch.pop_mask.bool() #shape (batch_size,)
-        active_children = state.children.lol[range_batch_size, next_active_nodes] #shape (batch_size, max. number of children)
-        push_all_children_mask = (active_children != 0) #shape (batch_size, max. number of children)
-        push_all_children_mask &= pop_mask.unsqueeze(1) # only push those children where we will pop the current node from the top of the stack.
-
-        state.stack.pop_and_push_multiple(active_children, pop_mask, push_all_children_mask, reverse=self.reverse_push_actions)
-
+        state.stack.push(decision_batch.push_tokens, decision_batch.push_mask.bool())
+        state.stack.pop_wo_peek(decision_batch.pop_mask.bool())

@@ -12,7 +12,7 @@ from allennlp.nn.util import get_text_field_mask, get_final_encoder_states, get_
     get_device_of
 
 from topdown_parser.dataset_readers.amconll_tools import AMSentence
-from topdown_parser.am_algebra.tools import is_welltyped, get_tree_type
+from topdown_parser.am_algebra.tools import get_tree_type
 from topdown_parser.losses.losses import EdgeExistenceLoss
 from topdown_parser.nn import dm_edge_loss
 from topdown_parser.nn.ContextProvider import ContextProvider
@@ -22,9 +22,9 @@ from topdown_parser.nn.EdgeModel import EdgeModel
 from topdown_parser.nn.kg_edge_model import KGEdges
 from topdown_parser.nn.supertagger import Supertagger
 from topdown_parser.nn.utils import get_device_id, index_tensor_dict, batch_and_pad_tensor_dict, expand_tensor_dict
-from topdown_parser.transition_systems.parsing_state import undo_one_batching, BatchedParsingState, \
-    undo_one_batching_eval, BatchedStack, BatchedListofList
-from topdown_parser.transition_systems.transition_system import TransitionSystem, Decision
+from topdown_parser.transition_systems.gpu_parsing.parsing_state import undo_one_batching, BatchedParsingState, \
+    undo_one_batching_eval
+from topdown_parser.transition_systems.gpu_parsing.transition_system import GPUTransitionSystem, Decision
 
 import heapq
 
@@ -37,7 +37,7 @@ class TopDownDependencyParser(Model):
                  decoder: DecoderCell,
                  edge_model: EdgeModel,
                  edge_label_model: EdgeLabelModel,
-                 transition_system : TransitionSystem,
+                 transition_system : GPUTransitionSystem,
                  edge_loss : EdgeExistenceLoss,
                  tagger_encoder : Optional[Seq2SeqEncoder] = None,
                  kg_encoder : Optional[Seq2SeqEncoder] = None,

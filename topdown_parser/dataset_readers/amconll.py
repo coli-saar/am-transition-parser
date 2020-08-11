@@ -1,5 +1,4 @@
 import time
-from functools import partial
 from typing import Dict, Iterable, List, Optional
 import logging
 
@@ -18,10 +17,10 @@ from allennlp.data.tokenizers import Token
 
 from .ContextField import ContextField
 from .amconll_tools import parse_amconll, AMSentence
-from ..am_algebra.tools import is_welltyped, get_term_types
-from topdown_parser.transition_systems.transition_system import TransitionSystem, DecisionBatch
+from ..am_algebra.tools import is_welltyped
+from topdown_parser.transition_systems.gpu_parsing.transition_system import GPUTransitionSystem
 from ..nn.utils import move_tensor_dict
-from ..transition_systems.parsing_state import BatchedParsingState
+from ..transition_systems.gpu_parsing.parsing_state import BatchedParsingState
 
 from tqdm import tqdm
 
@@ -40,7 +39,7 @@ class AMConllDatasetReader(OrderedDatasetReader):
     """
 
     def __init__(self,
-                 transition_system: TransitionSystem,
+                 transition_system: GPUTransitionSystem,
                  token_indexers: Dict[str, TokenIndexer] = None,
                  lazy: bool = False, fraction: float = 1.0,
                  overwrite_formalism : str = None,
@@ -60,7 +59,7 @@ class AMConllDatasetReader(OrderedDatasetReader):
         self.run_oracle = run_oracle
         self.workers = workers
         self.overwrite_formalism = overwrite_formalism
-        self.transition_system: TransitionSystem = transition_system
+        self.transition_system: GPUTransitionSystem = transition_system
         self._token_indexers = token_indexers or {'tokens': SingleIdTokenIndexer()}
         self.fraction = fraction
         self.only_read_fraction_if_train_in_filename = only_read_fraction_if_train_in_filename
