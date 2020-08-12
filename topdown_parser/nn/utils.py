@@ -1,4 +1,4 @@
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import torch
 import torch.nn.functional as F
@@ -55,3 +55,6 @@ def batch_and_pad_tensor_dict(tensor_dicts : List[Dict[str, torch.Tensor]]) -> D
 def expand_tensor_dict(td : Dict[str, torch.Tensor]) -> List[Dict[str, torch.Tensor]]:
     batch_size = next(iter(td.values())).shape[0]
     return [index_tensor_dict(td, i) for i in range(batch_size)]
+
+def move_tensor_dict(td : Dict[str, torch.Tensor], device : Optional[int]) -> Dict[str, torch.Tensor]:
+    return {k: t.to(device) for k,t in td.items()}

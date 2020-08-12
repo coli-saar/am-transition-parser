@@ -9,12 +9,11 @@ from topdown_parser.am_algebra.new_amtypes import ByApplySet, ModCache, ReadCach
 from topdown_parser.am_algebra.tree import Tree
 from topdown_parser.dataset_readers.AdditionalLexicon import AdditionalLexicon
 from topdown_parser.dataset_readers.amconll_tools import AMSentence
-from topdown_parser.nn.EdgeLabelModel import EdgeLabelModel
-from topdown_parser.nn.utils import get_device_id
 from topdown_parser.transition_systems.ltf import typ2supertag, typ2i, collect_sources
 from topdown_parser.transition_systems.parsing_state import CommonParsingState, ParsingState
-from topdown_parser.transition_systems.transition_system import TransitionSystem, Decision
-    #, get_parent, get_siblings
+from topdown_parser.transition_systems.transition_system import TransitionSystem
+from .decision import Decision
+
 from topdown_parser.transition_systems.utils import scores_to_selection, get_and_convert_to_numpy, get_best_constant, \
     single_score_to_selection, get_top_k_choices, copy_optional_set
 
@@ -62,7 +61,7 @@ class LTLState(CommonParsingState):
         return complete
 
 
-@TransitionSystem.register("ltl")
+
 class LTL(TransitionSystem):
     """
     DFS where when a node is visited for the second time, all its children are visited once.
@@ -133,7 +132,7 @@ class LTL(TransitionSystem):
             if child.node[1].label == "IGNORE":
                 continue
 
-            push_actions.append(Decision(child.node[0], child.node[1].label, ("", ""), ""))
+            push_actions.append(Decision(child.node[0], False, child.node[1].label, ("", ""), ""))
             recursive_actions.extend(self._construct_seq(child))
 
         if self.pop_with_0:
@@ -144,11 +143,11 @@ class LTL(TransitionSystem):
         if self.reverse_push_actions:
             push_actions = list(reversed(push_actions))
 
-        return push_actions + [Decision(relevant_position, "", (tree.node[1].fragment, tree.node[1].typ), tree.node[1].lexlabel)] + recursive_actions
+        return push_actions + [Decision(relevant_position, True, "", (tree.node[1].fragment, tree.node[1].typ), tree.node[1].lexlabel)] + recursive_actions
 
     def get_order(self, sentence: AMSentence) -> Iterable[Decision]:
         t = Tree.from_am_sentence(sentence)
-        r = [Decision(t.node[0], t.node[1].label, ("", ""), "")] + self._construct_seq(t)
+        r = [Decision(t.node[0], False, t.node[1].label, ("", ""), "")] + self._construct_seq(t)
         return r
 
     def check_correct(self, gold_sentence : AMSentence, predicted : AMSentence) -> bool:
@@ -273,7 +272,7 @@ class LTL(TransitionSystem):
         if not state.root_determined: # First decision must choose root.
             child_scores[0] = -INF
             s, selected_node = torch.max(child_scores, dim=0)
-            return Decision(int(selected_node), "ROOT", ("",""), "",termtyp=None, score=float(s))
+            return Decision(int(selected_node), False, "ROOT", ("",""), "",termtyp=None, score=float(s))
 
         #Cannot select nodes that we have visited already.
         for seen in state.seen:
@@ -297,7 +296,7 @@ class LTL(TransitionSystem):
 
         if state.step == 1 or state.active_node == 0:
             #we are done (or after first step), do nothing.
-            return Decision(0, "", ("",""), "", score=0.0)
+            return Decision(0, False, "", ("",""), "", score=0.0)
 
         if (selected_node in state.seen and not self.pop_with_0) or (selected_node == 0 and self.pop_with_0):
             # pop node, select constant and lexical label.
@@ -315,7 +314,7 @@ class LTL(TransitionSystem):
             pop_node = 0 if self.pop_with_0 else state.active_node
             selected_lex_label = self.additional_lexicon.get_str_repr("lex_labels", int(scores["lex_labels"].cpu().numpy()))
             score += s
-            return Decision(pop_node, "", AMSentence.split_supertag(self.additional_lexicon.get_str_repr("constants", best_constant)), selected_lex_label, score=score)
+            return Decision(pop_node, True, "", AMSentence.split_supertag(self.additional_lexicon.get_str_repr("constants", best_constant)), selected_lex_label, score=score)
 
         # APP or MOD?
         label_scores = scores["all_labels_scores"][selected_node].cpu().numpy() #shape (edge vocab size)
@@ -348,10 +347,10 @@ class LTL(TransitionSystem):
         # Apply our choice
         if max_modify_score > max_apply_score:
             # MOD
-            return Decision(int(selected_node), self.additional_lexicon.get_str_repr("edge_labels",  best_modify_edge_id), ("",""),"", score=score+max_modify_score)
+            return Decision(int(selected_node), False, self.additional_lexicon.get_str_repr("edge_labels",  best_modify_edge_id), ("",""),"", score=score+max_modify_score)
         elif max_apply_score > -np.inf:
             # APP
-            return Decision(int(selected_node), self.additional_lexicon.get_str_repr("edge_labels",  best_apply_edge_id), ("",""),"", score=score+max_apply_score)
+            return Decision(int(selected_node), False, self.additional_lexicon.get_str_repr("edge_labels",  best_apply_edge_id), ("",""),"", score=score+max_apply_score)
         else:
             raise ValueError("Could not select action. Bug.")
 

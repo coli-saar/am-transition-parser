@@ -24,6 +24,7 @@ if __name__ == "__main__":
     optparser.add_argument('--cuda-device', type=int, default=0, help='id of GPU to use. Use -1 to compute on CPU.')
     optparser.add_argument('--beams', nargs="*", help='beam sizes to use.')
     optparser.add_argument("--batch_size", type=int, default=None, help="Overwrite batch size.")
+    optparser.add_argument("--parse_on_cpu", action="store_true", default=False, help="Enforce parsing on the CPU.")
 
 
 
@@ -37,6 +38,7 @@ if __name__ == "__main__":
     prepare_environment(config)
     model = archive.model
     model.eval()
+    model.parse_on_gpu = not args.parse_on_cpu
     pipelinepieces = PipelineTrainerPieces.from_params(config)
 
     if args.batch_size is not None and args.batch_size > 0:
@@ -45,6 +47,7 @@ if __name__ == "__main__":
         pipelinepieces.annotator.data_iterator = SameFormalismIterator(iterator.formalisms, args.batch_size)
 
     annotator = pipelinepieces.annotator
+    annotator.dataset_reader.workers = 1
 
     parse_test : ParseTest = pipelinepieces.callbacks.callbacks[CallbackName.AFTER_TRAINING.value]
     parse_test.active = True

@@ -7,7 +7,7 @@ from allennlp.common import Registrable
 from allennlp.data import Vocabulary
 from allennlp.models import Model
 from allennlp.modules import FeedForward
-from allennlp.nn.util import get_range_vector
+from allennlp.nn.util import get_range_vector, get_device_of
 from torch.nn import Parameter, Module
 import torch.nn.functional as F
 
@@ -62,7 +62,7 @@ class SimpleEdgeLabelModel(EdgeLabelModel):
         self.input_seq_len = encoded_input.shape[1]
         self.mask = mask
         batch_size = encoded_input.shape[0]
-        self.batch_size_range = get_range_vector(batch_size, get_device_id(encoded_input))
+        self.batch_size_range = get_range_vector(batch_size, get_device_of(encoded_input))
 
     def edge_label_scores(self, encoder_indices : torch.Tensor, decoder : torch.Tensor) -> torch.Tensor:
         """

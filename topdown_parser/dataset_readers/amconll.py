@@ -1,5 +1,4 @@
 import time
-from functools import partial
 from typing import Dict, Iterable, List, Optional
 import logging
 
@@ -19,10 +18,11 @@ from allennlp.data.tokenizers import Token
 from .ContextField import ContextField
 from .amconll_tools import parse_amconll, AMSentence
 from ..am_algebra.tools import is_welltyped
-from topdown_parser.transition_systems.transition_system import TransitionSystem
-from ..transition_systems.parsing_state import ParsingState
 
 from tqdm import tqdm
+
+from ..transition_systems.parsing_state import ParsingState
+from ..transition_systems.transition_system import TransitionSystem
 
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
 
@@ -45,11 +45,14 @@ class AMConllDatasetReader(OrderedDatasetReader):
                  overwrite_formalism : str = None,
                  workers : int = 1,
                  run_oracle : bool = True,
+                 device : int = None,
                  fuzz: bool = False,
                  fuzz_beam_search : bool = False,
                  use_tqdm : bool = False,
-                 only_read_fraction_if_train_in_filename: bool = False) -> None:
+                 only_read_fraction_if_train_in_filename: bool = False,
+                 read_tokens_only: bool = False) -> None:
         super().__init__(lazy)
+        self.read_tokens_only = read_tokens_only
         self.use_tqdm = use_tqdm
         self.fuzz_beam_search = fuzz_beam_search
         self.fuzz = fuzz
@@ -61,6 +64,9 @@ class AMConllDatasetReader(OrderedDatasetReader):
         self.fraction = fraction
         self.only_read_fraction_if_train_in_filename = only_read_fraction_if_train_in_filename
         self.lexicon = transition_system.additional_lexicon
+        if device is not None and device < 0:
+            device = None
+        self.device = device
 
     def collect_sentences(self, file_path : str) -> List[AMSentence]:
         file_path = cached_path(file_path)
@@ -128,7 +134,7 @@ class AMConllDatasetReader(OrderedDatasetReader):
         fields["metadata"] = MetadataField({"formalism": formalism,
                                             "am_sentence": am_sentence,
                                             "is_annotated": am_sentence.is_annotated()})
-        if not am_sentence.is_annotated():
+        if not am_sentence.is_annotated() or self.read_tokens_only:
             return Instance(fields)
 
         #We are dealing with training data, prepare it accordingly.
@@ -172,7 +178,7 @@ class AMConllDatasetReader(OrderedDatasetReader):
                 # if len(v.shape) > 1: #remove batch dimension, we have only one batch element
                 #     v = v.squeeze(0)
 
-                contexts[k].append(v.numpy())
+                contexts[k].append(v.cpu().numpy())
             # print(i, next_active, decisions[i].position, self.transition_system.gather_context(next_active))
             state = self.transition_system.step(state, decisions[i], in_place=True)
 
@@ -203,7 +209,9 @@ class AMConllDatasetReader(OrderedDatasetReader):
             # Now fuzz
             rng_state = torch.random.get_rng_state()
             stripped_sentence = am_sentence.strip_annotation()
-            hash_value = len(am_sentence) + sum(self.lexicon.get_id("edge_labels", w.label) for w in am_sentence.words)
+            # print([w.token for w in am_sentence.words])
+            hash_value = len(am_sentence) + sum(len(w.token)*ord(w.token[0])*ord(w.token[-1]) for w in am_sentence.words)
+            # print(hash_value)
             torch.random.manual_seed(hash_value)
             state : ParsingState = self.transition_system.initial_state(stripped_sentence, None)
             for _ in range(2*len(stripped_sentence)+1):
@@ -212,13 +220,13 @@ class AMConllDatasetReader(OrderedDatasetReader):
                 state = self.transition_system.step(state, decision, in_place=True)
 
             assert state.is_complete()
-            assert is_welltyped(state.extract_tree())
+            assert (not self.transition_system.guarantees_well_typedness()) or is_welltyped(state.extract_tree())
             torch.random.set_rng_state(rng_state)
 
         if self.fuzz_beam_search:
             rng_state = torch.random.get_rng_state()
             stripped_sentence = am_sentence.strip_annotation()
-            hash_value = len(am_sentence) + sum(self.lexicon.get_id("edge_labels", w.label) for w in am_sentence.words)
+            hash_value = len(am_sentence) + sum(len(w.token)*ord(w.token[0])*ord(w.token[-1]) for w in am_sentence.words)
             torch.random.manual_seed(hash_value)
             state : ParsingState = self.transition_system.initial_state(stripped_sentence, None)
             for _ in range(2*len(stripped_sentence)+1):
@@ -227,7 +235,7 @@ class AMConllDatasetReader(OrderedDatasetReader):
                 state = self.transition_system.step(state, decision, in_place=True)
 
             assert state.is_complete()
-            assert is_welltyped(state.extract_tree())
+            assert (not self.transition_system.guarantees_well_typedness()) or is_welltyped(state.extract_tree())
             torch.random.set_rng_state(rng_state)
 
         ##################################################################

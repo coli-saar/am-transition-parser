@@ -54,6 +54,7 @@ if __name__ == "__main__":
         pipelinepieces.annotator.data_iterator = SameFormalismIterator(iterator.formalisms, args.batch_size)
 
     annotator = pipelinepieces.annotator
+    annotator.dataset_reader.workers = 1
 
     parse_dev : ParseDev = pipelinepieces.callbacks.callbacks[CallbackName.AFTER_VALIDATION.value]
     metrics = dict()

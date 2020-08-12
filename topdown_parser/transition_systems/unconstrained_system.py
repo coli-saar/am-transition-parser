@@ -52,7 +52,9 @@ class UnconstrainedTransitionSystem(TransitionSystem):
 
         selected_lex_label = self.additional_lexicon.get_str_repr("lex_labels", int(scores["lex_labels"].cpu().numpy()))
 
-        return Decision(int(selected_node), selected_label, AMSentence.split_supertag(selected_supertag), selected_lex_label, score=score)
+        selected_node = int(selected_node)
+        pop = (selected_node == 0 and self.pop_with_0) or (selected_node == state.active_node and not self.pop_with_0)
+        return Decision(selected_node, pop, selected_label, AMSentence.split_supertag(selected_supertag), selected_lex_label, score=score)
 
     def top_k_decision(self, scores: Dict[str, torch.Tensor], state : CommonParsingState, k : int) -> List[Decision]:
         # Select node:

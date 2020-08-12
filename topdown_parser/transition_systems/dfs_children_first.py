@@ -7,13 +7,11 @@ import torch
 from topdown_parser.am_algebra.tree import Tree
 from topdown_parser.dataset_readers.AdditionalLexicon import AdditionalLexicon
 from topdown_parser.dataset_readers.amconll_tools import AMSentence
-from topdown_parser.nn.EdgeLabelModel import EdgeLabelModel
-from topdown_parser.nn.utils import get_device_id
 from topdown_parser.transition_systems.parsing_state import CommonParsingState, ParsingState
-from topdown_parser.transition_systems.transition_system import TransitionSystem, Decision
+from topdown_parser.transition_systems.transition_system import TransitionSystem
+from .decision import Decision
 #from topdown_parser.transition_systems.parsing_state import get_parent, get_siblings
 from topdown_parser.transition_systems.unconstrained_system import UnconstrainedTransitionSystem
-from topdown_parser.transition_systems.utils import scores_to_selection, single_score_to_selection
 
 
 class DFSChildrenFirstState(CommonParsingState):
@@ -40,7 +38,7 @@ class DFSChildrenFirstState(CommonParsingState):
         copy.step = self.step
         return copy
 
-@TransitionSystem.register("dfs-children-first")
+
 class DFSChildrenFirst(UnconstrainedTransitionSystem):
     """
     DFS where when a node is visited for the second time, all its children are visited once.
@@ -60,6 +58,16 @@ class DFSChildrenFirst(UnconstrainedTransitionSystem):
         assert children_order in ["LR", "IO", "RL"], "unknown children order"
 
         self.children_order = children_order
+
+    def guarantees_well_typedness(self) -> bool:
+        return False
+
+    def get_unconstrained_version(self) -> "GPUTransitionSystem":
+        """
+        Return an unconstrained version that does not do type checking.
+        :return:
+        """
+        return self
 
     def _construct_seq(self, tree: Tree) -> List[Decision]:
         own_position = tree.node[0]
@@ -86,7 +94,7 @@ class DFSChildrenFirst(UnconstrainedTransitionSystem):
             if child.node[1].label == "IGNORE":
                 continue
 
-            push_actions.append(Decision(child.node[0], child.node[1].label, ("", ""), ""))
+            push_actions.append(Decision(child.node[0], False, child.node[1].label, ("", ""), ""))
             recursive_actions.extend(self._construct_seq(child))
 
         if self.pop_with_0:
@@ -97,11 +105,11 @@ class DFSChildrenFirst(UnconstrainedTransitionSystem):
         if self.reverse_push_actions:
             push_actions = list(reversed(push_actions))
 
-        return push_actions + [Decision(relevant_position, "", (tree.node[1].fragment, tree.node[1].typ), tree.node[1].lexlabel)] + recursive_actions
+        return push_actions + [Decision(relevant_position, True, "", (tree.node[1].fragment, tree.node[1].typ), tree.node[1].lexlabel)] + recursive_actions
 
     def get_order(self, sentence: AMSentence) -> Iterable[Decision]:
         t = Tree.from_am_sentence(sentence)
-        r = [Decision(t.node[0], t.node[1].label, ("", ""), "")] + self._construct_seq(t)
+        r = [Decision(t.node[0], False, t.node[1].label, ("", ""), "")] + self._construct_seq(t)
         return r
 
     def check_correct(self, gold_sentence : AMSentence, predicted : AMSentence) -> bool:

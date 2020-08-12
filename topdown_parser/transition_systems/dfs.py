@@ -8,7 +8,8 @@ from topdown_parser.am_algebra.tree import Tree
 from topdown_parser.dataset_readers.AdditionalLexicon import AdditionalLexicon
 from topdown_parser.dataset_readers.amconll_tools import AMSentence
 from topdown_parser.transition_systems.parsing_state import CommonParsingState, ParsingState
-from topdown_parser.transition_systems.transition_system import TransitionSystem, Decision
+from topdown_parser.transition_systems.transition_system import TransitionSystem
+from .decision import Decision
 from topdown_parser.transition_systems.unconstrained_system import UnconstrainedTransitionSystem
 
 
@@ -24,7 +25,7 @@ class DFSState(CommonParsingState):
 
 
 
-@TransitionSystem.register("dfs")
+
 class DFS(UnconstrainedTransitionSystem):
 
     def __init__(self, children_order: str, pop_with_0: bool, additional_lexicon : AdditionalLexicon):
@@ -50,9 +51,9 @@ class DFS(UnconstrainedTransitionSystem):
                 to_right.append(child)
 
         if is_first_child:
-            beginning = [Decision(own_position, tree.node[1].label, parent_type, parent_lex_label)]
+            beginning = [Decision(own_position, False, tree.node[1].label, parent_type, parent_lex_label)]
         else:
-            beginning = [Decision(own_position, tree.node[1].label, ("", ""), "")]
+            beginning = [Decision(own_position, False, tree.node[1].label, ("", ""), "")]
 
         if self.children_order == "LR":
             children = to_left + to_right
@@ -69,10 +70,10 @@ class DFS(UnconstrainedTransitionSystem):
         if len(tree.children) == 0:
             #This subtree has no children, thus also no first child at which we would determine the type of the parent
             #Let's determine the type now.
-            last_decision = Decision(last_position, "", (tree.node[1].fragment, tree.node[1].typ),
+            last_decision = Decision(last_position, True, "", (tree.node[1].fragment, tree.node[1].typ),
                                      tree.node[1].lexlabel)
         else:
-            last_decision = Decision(last_position, "", ("",""), "")
+            last_decision = Decision(last_position, True, "", ("",""), "")
         ret.append(last_decision)
         return ret
 
@@ -81,6 +82,16 @@ class DFS(UnconstrainedTransitionSystem):
         t = Tree.from_am_sentence(sentence)
         r = self._construct_seq(t, False, ("",""),"")
         return r
+
+    def get_unconstrained_version(self) -> TransitionSystem:
+        """
+        Return an unconstrained version that does not do type checking.
+        :return:
+        """
+        return self
+
+    def guarantees_well_typedness(self) -> bool:
+        return False
 
     def check_correct(self, gold_sentence : AMSentence, predicted : AMSentence) -> bool:
         return all(x.head == y.head for x, y in zip(gold_sentence, predicted)) and \

@@ -19,10 +19,10 @@ local eval_commands = import "eval_commands.libsonnet";
 
 local additional_lexicon = {
      "sublexica" : {
-            "edge_labels" : "data/AMR/2015/train/edges.txt",
-            "constants" : "data/AMR/2015/train/constants.txt",
-            "term_types" : "data/AMR/2015/train/types.txt",
-            "lex_labels" : "data/AMR/2015/train/lex_labels.txt"
+            "edge_labels" : "data/AMR/2015/lexicon/edges.txt",
+            "constants" : "data/AMR/2015/lexicon/constants.txt",
+            "term_types" : "data/AMR/2015/lexicon/types.txt",
+            "lex_labels" : "data/AMR/2015/lexicon/lex_labels.txt"
      }
 } ;
 
@@ -39,8 +39,10 @@ local transition_system = {
 local dataset_reader = {
                "type": "amconll",
                "transition_system" : transition_system,
-               "workers" : 4,
+               "workers" : 1,
                "overwrite_formalism" : "amr",
+               "run_oracle" : true,
+               "fuzz" : true,
                "token_indexers" : {
                     "tokens" : {
                         "type": "single_id",

@@ -15,6 +15,7 @@ import allennlp.nn.util as util
 if __name__ == "__main__":
     import_submodules("topdown_parser")
     from topdown_parser.dataset_readers.same_formalism_iterator import SameFormalismIterator
+    from topdown_parser.dataset_readers.amconll_tools import parse_amconll
 
     optparser = argparse.ArgumentParser(add_help=True,
                                         description="Parse an amconll file (no annotions) with beam search.")
@@ -25,6 +26,7 @@ if __name__ == "__main__":
     optparser.add_argument('--cuda-device', type=int, default=0, help='id of GPU to use. Use -1 to compute on CPU.')
     optparser.add_argument('--beam', type=int, default=2, help='beam size. Default: 2')
     optparser.add_argument("--batch_size", type=int, default=None, help="Overwrite batch size.")
+    optparser.add_argument("--parse_on_cpu", action="store_true", default=False, help="Enforce parsing on the CPU.")
 
     args = optparser.parse_args()
 
@@ -38,6 +40,7 @@ if __name__ == "__main__":
     model = archive.model
     model.eval()
     model.k_best = args.beam
+    model.parse_on_gpu = not args.parse_on_cpu
 
     pipelinepieces = PipelineTrainerPieces.from_params(config)
 
@@ -46,8 +49,21 @@ if __name__ == "__main__":
         iterator : SameFormalismIterator = pipelinepieces.annotator.data_iterator
         pipelinepieces.annotator.data_iterator = SameFormalismIterator(iterator.formalisms, args.batch_size)
 
+    annotator = pipelinepieces.annotator
+    annotator.dataset_reader.workers = 1
+
+    #Don't read in entire AM dependency trees, just the tokens.
+    annotator.dataset_reader.read_tokens_only = True
+
     t0 = time.time()
-    pipelinepieces.annotator.annotate_file(model, args.input_file, args.output_file)
+    annotator.annotate_file(model, args.input_file, args.output_file)
     t1 = time.time()
-    print("Prediction took", t1-t0, "seconds")
+
+    cumulated_parse_time = 0.0
+    with open(args.output_file) as f:
+        for am_sentence in parse_amconll(f):
+            cumulated_parse_time += float(am_sentence.attributes["normalized_parsing_time"])
+
+    print("Prediction took", t1-t0, "seconds overall")
+    print("Parsing time was", cumulated_parse_time)
 

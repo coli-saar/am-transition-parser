@@ -17,8 +17,8 @@ from topdown_parser.nn.EdgeLabelModel import EdgeLabelModel
 from topdown_parser.nn.utils import get_device_id
 from topdown_parser.transition_systems import utils
 from topdown_parser.transition_systems.parsing_state import CommonParsingState, ParsingState
-from topdown_parser.transition_systems.transition_system import TransitionSystem, Decision
-#from topdown_parser.transition_systems.parsing_state import get_parent, get_siblings
+from topdown_parser.transition_systems.transition_system import TransitionSystem
+from .decision import Decision
 from topdown_parser.transition_systems.utils import scores_to_selection, get_best_constant, single_score_to_selection, \
     is_empty, get_top_k_choices, copy_optional_set
 
@@ -121,6 +121,9 @@ class LTF(TransitionSystem):
     def predict_supertag_from_tos(self) -> bool:
         return True
 
+    def guarantees_well_typedness(self) -> bool:
+        return True
+
     def validate_model(self, parser : "TopDownDependencyParser") -> None:
         """
         Check if the parsing model produces all the scores that we need.
@@ -153,9 +156,9 @@ class LTF(TransitionSystem):
                     to_right.append(child)
 
             if is_first_child:
-                beginning = [Decision(own_position, tree.node[1].label, parent_type, parent_lex_label, parent_term_type)]
+                beginning = [Decision(own_position, False, tree.node[1].label, parent_type, parent_lex_label, parent_term_type)]
             else:
-                beginning = [Decision(own_position, tree.node[1].label, ("", ""), "")]
+                beginning = [Decision(own_position, False, tree.node[1].label, ("", ""), "")]
 
             if self.children_order == "LR":
                 children = to_left + to_right
@@ -172,10 +175,10 @@ class LTF(TransitionSystem):
             if len(tree.children) == 0:
                 #This subtree has no children, thus also no first child at which we would determine the type of the parent
                 #Let's determine the type now.
-                last_decision = Decision(last_position, "", (tree.node[1].fragment, tree.node[1].typ),
+                last_decision = Decision(last_position, True, "", (tree.node[1].fragment, tree.node[1].typ),
                                          tree.node[1].lexlabel, term_types[own_position-1])
             else:
-                last_decision = Decision(last_position, "", ("",""), "")
+                last_decision = Decision(last_position, True, "", ("",""), "")
             ret.append(last_decision)
             return ret
 
@@ -307,10 +310,10 @@ class LTF(TransitionSystem):
         if not state.root_determined: # First decision must choose root.
             child_scores[0] = nINF
             s, selected_node = torch.max(child_scores, dim=0)
-            return Decision(int(selected_node), "ROOT", ("",""), "",termtyp=None, score=float(s))
+            return Decision(int(selected_node), False, "ROOT", ("",""), "",termtyp=None, score=float(s))
 
         if state.active_node == 0:
-            return Decision(0, "", ("",""), "", termtyp=None, score=0.0)
+            return Decision(0, False, "", ("",""), "", termtyp=None, score=0.0)
 
         score = 0.0
         constant_scores = scores["constants_scores"].cpu().numpy()
@@ -374,7 +377,7 @@ class LTF(TransitionSystem):
         score += s
 
         if (selected_node == 0 and self.pop_with_0) or (selected_node == state.active_node and not self.pop_with_0):
-            return Decision(int(selected_node), "", selected_constant, selected_lex_label, selected_term_type, score=score)
+            return Decision(int(selected_node), True, "", selected_constant, selected_lex_label, selected_term_type, score=score)
 
         words_left_after_this = state.words_left - 1
 
@@ -400,9 +403,9 @@ class LTF(TransitionSystem):
             best_modify_edge, max_mod_score = get_best_constant(self.modify_ids, label_scores)
 
         if max_apply_score > max_mod_score:
-            return Decision(int(selected_node), "APP_"+best_apply_source, selected_constant, selected_lex_label, selected_term_type, score=score+max_apply_score)
+            return Decision(int(selected_node), False, "APP_"+best_apply_source, selected_constant, selected_lex_label, selected_term_type, score=score+max_apply_score)
         elif max_mod_score > -np.inf:
-            return Decision(int(selected_node), self.additional_lexicon.get_str_repr("edge_labels", best_modify_edge), selected_constant, selected_lex_label, selected_term_type, score=score+max_mod_score)
+            return Decision(int(selected_node), False, self.additional_lexicon.get_str_repr("edge_labels", best_modify_edge), selected_constant, selected_lex_label, selected_term_type, score=score+max_mod_score)
         else:
             raise ValueError("Could not perform any action. Bug.")
 
@@ -511,11 +514,11 @@ class LTF(TransitionSystem):
 
                 if selected_node == pop_node:
                     if determine_head_type:
-                        decisions.append(Decision(pop_node, "",
+                        decisions.append(Decision(pop_node, True, "",
                                                   AMSentence.split_supertag(self.additional_lexicon.get_str_repr("constants", best_local_constant)),
                                                   selected_lex_label, term_type_of_tos, score=node_score + local_decision_score))
                     else:
-                        decisions.append(Decision(pop_node, "", ("",""), "_", None, score=node_score))
+                        decisions.append(Decision(pop_node, True, "", ("",""), "_", None, score=node_score))
                     continue
 
                 words_left_after_this = state.words_left - 1
@@ -532,22 +535,22 @@ class LTF(TransitionSystem):
                 if determine_head_type:
                     head_constant = AMSentence.split_supertag(self.additional_lexicon.get_str_repr("constants", best_local_constant))
                     for source in sorted(applyset_todo_tos, key=lambda source: source_to_score[source], reverse=True)[:k]:
-                        decisions.append(Decision(int(selected_node), "APP_"+source, head_constant, selected_lex_label, term_type_of_tos,
+                        decisions.append(Decision(int(selected_node), False, "APP_"+source, head_constant, selected_lex_label, term_type_of_tos,
                                                   score=node_score + local_decision_score + source_to_score[source]))
 
                     if words_left_after_this - sources_to_be_filled >= 0:
                         for edge_id, modify_score in top_k_mod_choices:
-                            decisions.append(Decision(int(selected_node), self.additional_lexicon.get_str_repr("edge_labels", edge_id), head_constant, selected_lex_label, term_type_of_tos,
+                            decisions.append(Decision(int(selected_node), False, self.additional_lexicon.get_str_repr("edge_labels", edge_id), head_constant, selected_lex_label, term_type_of_tos,
                                                       score=node_score + local_decision_score + modify_score))
 
                 else:
                     for source in sorted(applyset_todo_tos, key=lambda source: source_to_score[source], reverse=True)[:k]:
-                        decisions.append(Decision(int(selected_node), "APP_"+source, ("",""), "_", None,
+                        decisions.append(Decision(int(selected_node), False, "APP_"+source, ("",""), "_", None,
                                                   score=node_score + source_to_score[source]))
 
                     if words_left_after_this - sources_to_be_filled >= 0:
                         for edge_id, modify_score in top_k_mod_choices:
-                            decisions.append(Decision(int(selected_node), self.additional_lexicon.get_str_repr("edge_labels", edge_id), ("",""), "_", None,
+                            decisions.append(Decision(int(selected_node), False, self.additional_lexicon.get_str_repr("edge_labels", edge_id), ("",""), "_", None,
                                                       score=node_score + modify_score))
 
         assert len(decisions) > 0
@@ -556,176 +559,6 @@ class LTF(TransitionSystem):
     def assumes_greedy_ok(self) -> Set[str]:
         return set()
 
-
-# def step(self, selected_nodes: torch.Tensor, additional_scores : Dict[str, torch.Tensor]) -> Tuple[torch.Tensor, torch.Tensor]:
-    #     device = get_device_id(selected_nodes)
-    #     assert selected_nodes.shape == (self.batch_size,)
-    #
-    #     selected_nodes = selected_nodes.cpu().numpy()
-    #     label_scores = utils.get_and_convert_to_numpy(additional_scores, "edge_labels_scores") #shape (batch_size, label_vocab)
-    #     constant_scores = utils.get_and_convert_to_numpy(additional_scores, "constants_scores") # shape (batch_size, constant)
-    #     term_type_scores = utils.get_and_convert_to_numpy(additional_scores, "term_types_scores") # shpae (batch_size, type vocab)
-    #
-    #
-    #     selected_lex_labels = scores_to_selection(additional_scores, self.additional_lexicon, "lex_labels")
-    #     unconstrained_best_labels = scores_to_selection(additional_scores, self.additional_lexicon, "edge_labels")
-    #     #unconstrained_best_constants = scores_to_selection(additional_scores, self.additional_lexicon, "constants")
-    #     unconstrained_term_types = scores_to_selection(additional_scores, self.additional_lexicon, "term_types")
-    #
-    #     r = []
-    #     next_choices = []
-    #     for i in range(self.batch_size):
-    #         if self.stack[i]:
-    #             selected_node_in_batch_element = int(selected_nodes[i])
-    #
-    #             if selected_node_in_batch_element == 0 and self.pop_with_0:
-    #                 self.stack[i].pop()
-    #             elif not self.pop_with_0 and selected_node_in_batch_element in self.seen[i]:
-    #                 popped = self.stack[i].pop()
-    #                 assert popped == selected_nodes[i]
-    #             else:
-    #                 tos = self.stack[i][-1]
-    #                 self.heads[i][selected_node_in_batch_element - 1] = tos
-    #
-    #                 self.children[i][tos].append(selected_node_in_batch_element)  # 1-based
-    #
-    #                 words_left_before_selection = self.words_left[i] - self._sources_to_be_filled(i)
-    #                 self.words_left[i] -= 1
-    #
-    #                 if not self.root_determined[i]:
-    #                     self.labels[i][selected_node_in_batch_element-1] = "ROOT"
-    #                     self.root_determined[i] = True
-    #
-    #                     max_score = float("-inf")
-    #                     best_constant = None
-    #                     best_lex_type = None
-    #                     for lex_type in self.candidate_lex_types.get_candidates(AMType.parse_str("()"), words_left_before_selection-1):
-    #                         local_best_constant, local_best_constant_score = get_best_constant(self.typ2supertag[lex_type], constant_scores[i])
-    #                         if local_best_constant_score >= max_score:
-    #                             max_score = local_best_constant_score
-    #                             best_constant = local_best_constant
-    #                             best_lex_type = lex_type
-    #
-    #                     self.supertags[i][selected_node_in_batch_element-1] = self.additional_lexicon.get_str_repr("constants", best_constant)
-    #                     self.applysets_todo[i][selected_node_in_batch_element-1] = best_lex_type.get_apply_set(AMType.parse_str("()"))
-    #                     self.lexical_types[i][selected_node_in_batch_element-1] = best_lex_type
-    #
-    #                 else:
-    #                     # What if we wanted to apply? What's the best apply operation?
-    #                     lex_type_of_tos = self.lexical_types[i][tos-1]
-    #                     max_apply_score = -np.inf
-    #                     best_apply_source = None
-    #                     best_apply_term_type = None
-    #                     best_apply_constant = None
-    #                     best_apply_lex_type = None
-    #
-    #                     for todo_source in self.applysets_todo[i][tos-1]:
-    #                         req = lex_type_of_tos.get_request(todo_source)
-    #                         i_req = self.typ2i[req]
-    #                         source_score = label_scores[i, self.additional_lexicon.get_id("edge_labels", "APP_"+todo_source)]
-    #
-    #                         for lex_type in self.candidate_lex_types.get_candidates(req, words_left_before_selection):
-    #                             best_local_constant, best_local_constant_score = get_best_constant(self.typ2supertag[lex_type], constant_scores[i])
-    #                             score = source_score + best_local_constant_score + term_type_scores[i, i_req]
-    #
-    #                             if score >= max_apply_score:
-    #                                 best_apply_source = todo_source
-    #                                 best_apply_constant = best_local_constant
-    #                                 best_apply_term_type = req
-    #                                 best_apply_lex_type = lex_type
-    #                                 max_apply_score = score
-    #
-    #                     # What if we want to modify? Find best mod operation.
-    #                     max_mod_score = -np.inf
-    #                     best_modify_source = None
-    #                     best_modify_constant = None
-    #                     best_modify_term_type = None
-    #                     best_modify_lex_type = None
-    #
-    #                     if words_left_before_selection > 0 and unconstrained_term_types is not None: #and \
-    #                             #(best_apply_source is None or unconstrained_best_labels[i].startswith("MOD")):
-    #                         # MOD is only allowed if it leaves enough words.
-    #
-    #                         for source, subtype in self.mod_cache.get_modifiers(lex_type_of_tos):
-    #                             local_subtype_score = term_type_scores[i, self.typ2i[subtype]]
-    #                             local_label_score = label_scores[i, self.additional_lexicon.get_id("edge_labels", "MOD_"+source)]
-    #                             local_score = local_subtype_score + local_label_score
-    #
-    #                             for lex_type in self.candidate_lex_types.get_candidates(subtype, words_left_before_selection-1):
-    #                                 # we use words_left_before_selection - 1 because by adding the MOD edge, we have one word less (this one)
-    #                                 # and we didn't fill a source in the parent node that would compensate for that
-    #
-    #                                 best_local_constant, best_local_constant_score = get_best_constant(self.typ2supertag[lex_type], constant_scores[i])
-    #                                 score = local_score + best_local_constant_score
-    #                                 if score > max_mod_score:
-    #                                     max_mod_score = score
-    #                                     best_modify_source = source
-    #                                     best_modify_constant = best_local_constant
-    #                                     best_modify_term_type = subtype
-    #                                     best_modify_lex_type = lex_type
-    #
-    #                     #if best_modify_source is not None:
-    #                     #    # to make a fair comparison to the APP score, don't consider the term type score.
-    #                     #    max_mod_score = label_scores[i, self.additional_lexicon.get_id("edge_labels", "MOD_"+best_modify_source)] + constant_scores[i, best_modify_constant]
-    #
-    #                     #Make a decision on APP vs MOD
-    #                     if max_mod_score > max_apply_score:
-    #                         # MOD
-    #                         self.labels[i][selected_node_in_batch_element-1] = "MOD_" + best_modify_source
-    #                         self.supertags[i][selected_node_in_batch_element-1] = self.additional_lexicon.get_str_repr("constants", best_modify_constant)
-    #                         self.applysets_todo[i][selected_node_in_batch_element-1] = best_modify_lex_type.get_apply_set(best_modify_term_type)
-    #                         self.lexical_types[i][selected_node_in_batch_element-1] = best_modify_lex_type
-    #                     else:
-    #                         # APP
-    #                         self.labels[i][selected_node_in_batch_element-1] = "APP_" + best_apply_source
-    #                         self.supertags[i][selected_node_in_batch_element-1] = self.additional_lexicon.get_str_repr("constants", best_apply_constant)
-    #                         self.applysets_todo[i][selected_node_in_batch_element-1] = best_apply_lex_type.get_apply_set(best_apply_term_type)
-    #                         self.applysets_todo[i][tos-1].remove(best_apply_source)
-    #                         self.lexical_types[i][selected_node_in_batch_element-1] = best_apply_lex_type
-    #
-    #                 self.lex_labels[i][selected_node_in_batch_element-1] = selected_lex_labels[i]
-    #
-    #                 # push onto stack
-    #                 self.stack[i].append(selected_node_in_batch_element)
-    #
-    #             # determine possible next choices for tokens
-    #             self.seen[i].add(selected_node_in_batch_element)
-    #             choices = torch.zeros(self.input_seq_len)
-    #
-    #             if not self.stack[i]:
-    #                 r.append(0)
-    #                 next_choices.append(torch.zeros(self.input_seq_len))
-    #             else:
-    #                 r.append(self.stack[i][-1])
-    #
-    #                 if self.stack[i][-1] == 0: #we are at the top level
-    #                     if self.pop_with_0:
-    #                         choices[0] = 1
-    #                     else:
-    #                         choices[self.stack[i][-1]] = 1
-    #
-    #                 else:
-    #                     if len(self.applysets_todo[i][self.stack[i][-1]-1]) == 0: # We can close the current node
-    #                         if self.pop_with_0:
-    #                             choices[0] = 1
-    #                         else:
-    #                             choices[self.stack[i][-1]] = 1
-    #
-    #                     if len(self.applysets_todo[i][self.stack[i][-1]-1]) > 0 or self.words_left[i] - self._sources_to_be_filled(i) > 0:
-    #                         # if we have to fill sources here
-    #                         # or we CAN add more MOD edges because words might be left over.
-    #
-    #                         for child in range(1, len(self.sentences[i]) + 1):  # or we can choose a node that has not been used yet
-    #                             if child not in self.seen[i]:
-    #                                 choices[child] = 1
-    #
-    #                 next_choices.append(choices)
-    #         else:
-    #             r.append(0)
-    #             next_choices.append(torch.zeros(self.input_seq_len))
-    #
-    #
-    #     return torch.tensor(r, device=device), torch.stack(next_choices, dim=0)
 
     def check_correct(self, gold_sentence : AMSentence, predicted : AMSentence) -> bool:
         return all(x.head == y.head for x, y in zip(gold_sentence, predicted)) and \
