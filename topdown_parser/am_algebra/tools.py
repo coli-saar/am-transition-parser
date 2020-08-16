@@ -4,20 +4,37 @@ from topdown_parser.dataset_readers.amconll_tools import AMSentence, Entry
 from .new_amtypes import AMType, ReadCache, NonAMTypeException
 from .tree import Tree
 
+
+def is_welltyped(sent: AMSentence) -> bool:
+    return get_tree_type(sent) is not None
+
+
 def get_tree_type(sent : AMSentence) -> Optional[AMType]:
-    deptree = Tree.from_am_sentence(sent)
+    """
+    Get the term type at the root of sent, or None if not well-typed.
+    :param sent:
+    :return:
+    """
     root = sent.get_root()
     if root is None:
         return None
 
-    term_types = get_term_types(deptree, sent)
+    term_types = get_term_types(sent)
     return term_types[root]
 
-def get_term_types(deptree : Tree, sent : AMSentence) -> List[Optional[AMType]]:
+
+def get_term_types(sent: AMSentence) -> List[Optional[AMType]]:
+    """
+    Return a list of length len(sent), where each element is the term type
+    of the subtree rooted in the respective token, or None if the subtree is not well-typed.
+    :param sent:
+    :return:
+    """
+    deptree = Tree.from_am_sentence(sent)
     cache = ReadCache()
     term_types = [None for _ in sent.words]
 
-    def determine_tree_type(node : Tuple[int, Entry], children : List[Tuple[Optional[AMType],str]]) -> Tuple[Optional[AMType],str]:
+    def determine_tree_type(node: Tuple[int, Entry], children: List[Tuple[Optional[AMType],str]]) -> Tuple[Optional[AMType],str]:
         try:
             lextyp = cache.parse_str(node[1].typ)
         except NonAMTypeException:
@@ -70,51 +87,6 @@ def get_term_types(deptree : Tree, sent : AMSentence) -> List[Optional[AMType]]:
 
     deptree.fold(determine_tree_type)
     return term_types
-
-def is_welltyped(sent : AMSentence) -> bool:
-    return get_tree_type(sent) is not None
-
-# def top_down_term_types(sent : AMSentence) -> List[Set[AMType]]:
-#     """
-#     Returns for every token the set of possible term types when looking from a top-down perspective.
-#     :param sent:
-#     :return:
-#     """
-#     term_types = [set() for _ in sent.words]
-#     lex_types = [AMType.parse_str(w.typ) for w in sent.words]
-#
-#     for i,word in enumerate(sent.words):
-#         if word.label == "ROOT":
-#             term_types[i] = {AMType.parse_str("()")} # empty term type at the root
-#
-#         elif word.label.startswith("APP_"):
-#             # incoming APP_x edge
-#             source = word.label.split("_")[1]
-#             parent_lex_type = lex_types[word.head-1]
-#             term_types[i] = {parent_lex_type.get_request(source)}
-#
-#         elif word.label.startswith("MOD_"):
-#             source = word.label.split("_")[1]
-#             max_subtype = lex_types[word.head-1]
-#             for subtyp in get_all_subtypes(max_subtype):
-#                 subtyp.add_node(source)
-#                 term_types[i].add(subtyp)
-#
-#     return term_types
-
-
-
-# class SubtypeCache:
-#     def __init__(self, omega : Iterable[AMType]):
-#         self.subtypes_of : Dict[AMType, Set[AMType]] = {t : set() for t in omega}
-#
-#         for t1 in omega:
-#             for t2 in omega:
-#                 if t1.is_compatible_with(t2): #t1 is subgraph of t2
-#                     self.subtypes_of[t2].add(t1)
-#
-#     def get_subtypes_of(self, t):
-#         return self.subtypes_of[t]
 
 
 

@@ -11,9 +11,9 @@ from topdown_parser.am_algebra import AMType, NonAMTypeException, new_amtypes
 from topdown_parser.am_algebra.new_amtypes import CandidateLexType, ModCache, ReadCache
 from topdown_parser.am_algebra.tools import get_term_types
 from topdown_parser.am_algebra.tree import Tree
-from topdown_parser.dataset_readers.AdditionalLexicon import AdditionalLexicon
+from topdown_parser.dataset_readers.additional_lexicon import AdditionalLexicon
 from topdown_parser.dataset_readers.amconll_tools import AMSentence
-from topdown_parser.nn.EdgeLabelModel import EdgeLabelModel
+from topdown_parser.nn.edge_label_model import EdgeLabelModel
 from topdown_parser.nn.utils import get_device_id
 from topdown_parser.transition_systems import utils
 from topdown_parser.transition_systems.parsing_state import CommonParsingState, ParsingState
@@ -141,7 +141,8 @@ class LTF(TransitionSystem):
 
     def get_order(self, sentence: AMSentence) -> Iterable[Decision]:
         t = Tree.from_am_sentence(sentence)
-        term_types = get_term_types(t, sentence)
+        term_types = get_term_types(sentence)
+
         def _construct_seq(tree: Tree, is_first_child : bool, parent_type : Tuple[str, str], parent_lex_label : str, parent_term_type : AMType) -> List[Decision]:
             own_position = tree.node[0]
             to_left = []

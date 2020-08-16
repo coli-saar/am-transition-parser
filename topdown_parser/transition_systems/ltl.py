@@ -7,7 +7,7 @@ import torch
 from topdown_parser.am_algebra import AMType, new_amtypes
 from topdown_parser.am_algebra.new_amtypes import ByApplySet, ModCache, ReadCache
 from topdown_parser.am_algebra.tree import Tree
-from topdown_parser.dataset_readers.AdditionalLexicon import AdditionalLexicon
+from topdown_parser.dataset_readers.additional_lexicon import AdditionalLexicon
 from topdown_parser.dataset_readers.amconll_tools import AMSentence
 from topdown_parser.transition_systems.ltf import typ2supertag, typ2i, collect_sources
 from topdown_parser.transition_systems.parsing_state import CommonParsingState, ParsingState

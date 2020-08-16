@@ -5,7 +5,7 @@ import torch
 from allennlp.nn.util import get_mask_from_sequence_lengths
 
 from topdown_parser.dataset_readers.amconll_tools import AMSentence
-from topdown_parser.dataset_readers.AdditionalLexicon import AdditionalLexicon
+from topdown_parser.dataset_readers.additional_lexicon import AdditionalLexicon
 import torch.nn.functional as F
 
 from topdown_parser.transition_systems.gpu_parsing.datastructures.list_of_list import BatchedListofList
@@ -59,12 +59,12 @@ class BatchedParsingState:
         """
         return self.constants < 0
 
-    def is_complete(self) -> bool:
+    def is_complete(self) -> torch.Tensor:
         """
         All sentences in the batch done?
         :return:
         """
-        raise NotImplementedError()
+        return torch.all(self.stack.is_empty())
 
     def extract_trees(self) -> List[AMSentence]:
         r = []

@@ -15,7 +15,7 @@ if __name__ == "__main__":
     from topdown_parser.nn.parser import TopDownDependencyParser
 
     optparser = argparse.ArgumentParser(add_help=True,
-                                        description="Annotates loss into an annotated amconll file")
+                                        description="Annotates loss into an annotated amconll file. Was used to determine if beam search would help.")
 
     optparser.add_argument('archive_file', type=str, help='the archived model to make predictions with')
     optparser.add_argument('input_file', type=str, help='path to or url of the input file')

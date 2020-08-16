@@ -17,7 +17,7 @@ if __name__ == "__main__":
     from topdown_parser.dataset_readers.amconll_tools import parse_amconll
 
     optparser = argparse.ArgumentParser(add_help=True,
-                                        description="Parse an amconll file (no annotions) with beam search.")
+                                        description="Extract parsing time from parsed amconll file.")
 
     optparser.add_argument('input', type=str, help='amconll file with time measurements')
 

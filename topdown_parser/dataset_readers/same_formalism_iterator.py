@@ -30,6 +30,9 @@ class SameFormalismIterator(DataIterator):
     Splits batches into batches containing the same formalism and uses several underlying bucket iterators.
     On initialization, the formalisms must be provided as a list of strings.
 
+    ACTUALLY: since this parser currently does not support multi-task learning, this is a bit of overkill and a simple
+    BucketIterator would have sufficed.
+
     """
     def __init__(self, formalisms: List[str],
                  batch_size,

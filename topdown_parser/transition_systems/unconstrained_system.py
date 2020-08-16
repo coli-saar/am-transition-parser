@@ -2,9 +2,9 @@ from typing import Dict, Union, List, Set
 
 import torch
 
-from topdown_parser.dataset_readers.AdditionalLexicon import AdditionalLexicon
+from topdown_parser.dataset_readers.additional_lexicon import AdditionalLexicon
 from topdown_parser.dataset_readers.amconll_tools import AMSentence
-from topdown_parser.nn.EdgeLabelModel import EdgeLabelModel
+from topdown_parser.nn.edge_label_model import EdgeLabelModel
 from topdown_parser.transition_systems.parsing_state import CommonParsingState
 from topdown_parser.transition_systems.transition_system import Decision, TransitionSystem
 from topdown_parser.transition_systems.utils import single_score_to_selection
@@ -89,9 +89,12 @@ class UnconstrainedTransitionSystem(TransitionSystem):
         score_constant, selected_supertag = single_score_to_selection(scores, self.additional_lexicon, "constants")
         selected_lex_label = self.additional_lexicon.get_str_repr("lex_labels", int(scores["lex_labels"].cpu().numpy()))
 
-        return [Decision(int(children[i]),self.additional_lexicon.get_str_repr("edge_labels",best_labels[i]),
-                         AMSentence.split_supertag(selected_supertag), selected_lex_label,score= score_constant + label_scores[i] + children_scores[i])
-                for i in range(at_most_k)]
+        ret = []
+        for i in range(at_most_k):
+            pop = (children[i] == 0 and self.pop_with_0) or (children[i] == state.active_node and not self.pop_with_0)
+            ret.append(Decision(int(children[i]), pop, self.additional_lexicon.get_str_repr("edge_labels",best_labels[i]),
+                                AMSentence.split_supertag(selected_supertag), selected_lex_label,score= score_constant + label_scores[i] + children_scores[i]))
+        return ret
 
     def assumes_greedy_ok(self) -> Set[str]:
         """

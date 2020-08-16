@@ -5,9 +5,9 @@ import torch
 from allennlp.common import Registrable
 
 from topdown_parser.am_algebra import AMType
-from topdown_parser.dataset_readers.AdditionalLexicon import AdditionalLexicon, Lexicon
+from topdown_parser.dataset_readers.additional_lexicon import AdditionalLexicon, Lexicon
 from topdown_parser.dataset_readers.amconll_tools import AMSentence
-from topdown_parser.nn.EdgeLabelModel import EdgeLabelModel
+from topdown_parser.nn.edge_label_model import EdgeLabelModel
 from topdown_parser.nn.utils import get_device_id
 from topdown_parser.transition_systems.batched_parsing_state import BatchedParsingState
 from topdown_parser.transition_systems.decision import Decision, DecisionBatch

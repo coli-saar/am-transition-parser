@@ -5,6 +5,10 @@ from allennlp.common.checks import ConfigurationError
 
 
 class Lexicon:
+    """
+    Mapping strings to unique ids and back.
+    """
+
     UNK = "<UNK>"
     def __init__(self, file_name : str):
         self.s2i = dict()
@@ -43,8 +47,10 @@ class AdditionalLexicon(Registrable):
     """
     A class with a lexicon for things like
      - edge labels
+     - graph constants
+     - (term) types
     this is needed because when the context is gathered in the DatasetReader, the mapping
-    between these things and ids is not performed yet.
+    between these things and ids is not created yet.
     """
     POSSIBLE_KEYS = {"edge_labels", "term_types", "constants", "lex_labels"}
 

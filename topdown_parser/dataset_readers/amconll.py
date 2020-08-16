@@ -15,7 +15,7 @@ from allennlp.data.instance import Instance
 from allennlp.data.token_indexers import SingleIdTokenIndexer, TokenIndexer
 from allennlp.data.tokenizers import Token
 
-from .ContextField import ContextField
+from .context_field import ContextField
 from .amconll_tools import parse_amconll, AMSentence
 from ..am_algebra.tools import is_welltyped
 

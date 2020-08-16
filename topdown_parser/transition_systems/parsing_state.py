@@ -5,7 +5,7 @@ from typing import Tuple, Dict, Any, List, Set, Optional
 import torch
 
 from topdown_parser.dataset_readers.amconll_tools import AMSentence
-from topdown_parser.dataset_readers.AdditionalLexicon import AdditionalLexicon
+from topdown_parser.dataset_readers.additional_lexicon import AdditionalLexicon
 
 import numpy as np
 

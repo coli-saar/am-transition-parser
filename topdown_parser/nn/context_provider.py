@@ -7,7 +7,7 @@ from allennlp.nn.util import get_lengths_from_binary_sequence_mask
 
 from torch.nn import Module, EmbeddingBag, Dropout, Embedding
 
-from topdown_parser.dataset_readers.AdditionalLexicon import AdditionalLexicon
+from topdown_parser.dataset_readers.additional_lexicon import AdditionalLexicon
 from topdown_parser.nn.utils import get_device_id
 
 

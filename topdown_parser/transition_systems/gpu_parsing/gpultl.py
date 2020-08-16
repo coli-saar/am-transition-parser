@@ -6,14 +6,14 @@ import torch
 from topdown_parser.am_algebra import AMType
 from topdown_parser.am_algebra.new_amtypes import ModCache
 from topdown_parser.am_algebra.tree import Tree
-from topdown_parser.dataset_readers.AdditionalLexicon import AdditionalLexicon
+from topdown_parser.dataset_readers.additional_lexicon import AdditionalLexicon
 from topdown_parser.dataset_readers.amconll_tools import AMSentence
 from topdown_parser.transition_systems.decision import DecisionBatch
 from topdown_parser.transition_systems.gpu_parsing.datastructures.list_of_list import BatchedListofList
 from topdown_parser.transition_systems.gpu_parsing.datastructures.stack import BatchedStack
 from topdown_parser.nn.utils import get_device_id
 from topdown_parser.transition_systems.gpu_parsing.dfs_children_first import GPUDFSChildrenFirst
-from topdown_parser.transition_systems.gpu_parsing.logic_torch import index_OR, \
+from topdown_parser.transition_systems.gpu_parsing.logic_torch import index_or, \
     make_bool_multipliable, are_eq
 from topdown_parser.transition_systems.batched_parsing_state import BatchedParsingState
 from topdown_parser.transition_systems.ltl import LTL
@@ -54,8 +54,6 @@ class GPULTLState(BatchedParsingState):
         self.step = 0
         self.w_c = self.get_lengths().clone()
 
-    def is_complete(self) -> torch.Tensor:
-        return torch.all(self.stack.is_empty())
 
 #@GPUTransitionSystem.register("ltl")
 @TransitionSystem.register("ltl")
@@ -335,7 +333,7 @@ class GPULTL(LTL):
 
         # compute constants for all instances (will only be used if pop_mask = True)
         # RE-USE the lexical types from above.
-        possible_constants = index_OR(make_bool_multipliable(can_finish_now), self.lexical2constant)
+        possible_constants = index_or(make_bool_multipliable(can_finish_now), self.lexical2constant)
         assert possible_constants.shape == (batch_size, self.additional_lexicon.vocab_size("constants"))
         constant_mask = (~possible_constants).float()*10_000_000
         selected_constants = torch.argmax(scores["constants_scores"]-constant_mask, dim=1) #shape (batch_size,)
@@ -377,7 +375,7 @@ class GPULTL(LTL):
 
 
         #  translate source mask to edge label mask
-        edge_mask = index_OR(make_bool_multipliable(possible_app_sources), self.app_source2label_id) #shape (batch_size, edge labels)
+        edge_mask = index_or(make_bool_multipliable(possible_app_sources), self.app_source2label_id) #shape (batch_size, edge labels)
 
         edge_mask[mod_mask, :] |= self.mod_tensor #for some positions, we can also use MOD
         edge_mask[:, self.additional_lexicon.get_id("edge_labels", "ROOT")] = False

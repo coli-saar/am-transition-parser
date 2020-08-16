@@ -6,7 +6,7 @@ import torch.nn.functional as F
 from torch import nn
 from torch.nn import Parameter
 
-from topdown_parser.nn.DecoderCell import DecoderCell
+from topdown_parser.nn.decoder_cell import DecoderCell
 
 
 def VarFastLSTMCellF(input, hidden, w_ih, w_hh, b_ih=None, b_hh=None, noise_in=None, noise_hidden=None):

@@ -4,8 +4,15 @@ from typing import Optional, Tuple
 from dataclasses import dataclass
 
 from topdown_parser.am_algebra import AMType
-from topdown_parser.dataset_readers.AdditionalLexicon import AdditionalLexicon
+from topdown_parser.dataset_readers.additional_lexicon import AdditionalLexicon
 
+
+# A parsing decision always selects a position (pop is encoded as selecting 0 or the position currently on of the stack)
+# pop tells us if this is a pop decision (or Finish in LTL)
+# label is only meaningful if an edge is created, then it's the edge label
+# supertag is a tuple of a graph fragment and its AM type
+# lexlabel is the chosen lexical label (only meaningful if supertag is meaningful)
+# termtype is the term type we select in CHOOSE in LTF, otherwise it's meaningless
 
 @dataclass(frozen=True)
 class Decision:
@@ -17,6 +24,12 @@ class Decision:
     termtyp : Optional[AMType] = None
     score: float = 0.0
 
+
+# A decision batch works slightly differently to a Decision.
+# push_tokens are the nodes that were selected (corresponds to position)
+# push_mask[i] tells us if we actually create an edge to the push_tokens[i]
+# pop_mask[i] is true if we Pop/Finish in batch element i
+# constant_mask[i] is true if we actually select a constant for batch element i (would be Select in LTF, and Finish in LTL)
 @dataclass(frozen=True)
 class DecisionBatch:
     push_tokens: torch.Tensor #shape (batch_size,)

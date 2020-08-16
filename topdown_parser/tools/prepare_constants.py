@@ -46,7 +46,7 @@ for corpus in args.corpora:
                 print("Skipping non-well-typed AMDep tree.")
                 continue
 
-            term_types.update(get_term_types(Tree.from_am_sentence(am_sentence), am_sentence))
+            term_types.update(get_term_types(am_sentence))
             for entry in am_sentence.words:
                 typ = read_cache.parse_str(entry.typ)
                 lexical_types.add(typ)

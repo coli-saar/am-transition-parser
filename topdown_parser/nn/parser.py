@@ -15,10 +15,10 @@ from allennlp.nn.util import get_text_field_mask, get_final_encoder_states, get_
 from topdown_parser.dataset_readers.amconll_tools import AMSentence
 from topdown_parser.am_algebra.tools import get_tree_type
 from topdown_parser.losses.losses import EdgeExistenceLoss
-from topdown_parser.nn.ContextProvider import ContextProvider
-from topdown_parser.nn.DecoderCell import DecoderCell
-from topdown_parser.nn.EdgeLabelModel import EdgeLabelModel
-from topdown_parser.nn.EdgeModel import EdgeModel
+from topdown_parser.nn.context_provider import ContextProvider
+from topdown_parser.nn.decoder_cell import DecoderCell
+from topdown_parser.nn.edge_label_model import EdgeLabelModel
+from topdown_parser.nn.edge_model import EdgeModel
 from topdown_parser.nn.supertagger import Supertagger
 from topdown_parser.nn.utils import get_device_id, index_tensor_dict, batch_and_pad_tensor_dict, expand_tensor_dict
 from topdown_parser.transition_systems.decision import Decision

@@ -90,21 +90,8 @@ class Tree:
             return "("+str(self.node) +")"
         return "({} {})".format(str(self.node)," ".join(c.__repr__() for c in self.children))
 
-def weird_order(tree):
-    agenda = list(reversed(tree.children))
-    while agenda:
-        current_node = agenda.pop()
-        yield current_node
-        for child in current_node.children:
-            yield child
-            agenda.extend(reversed(child.children))
-        yield current_node
-
-
-
 
 if __name__ == "__main__":
-
 
     with open("data/tratz/gold-dev/gold-dev.amconll") as f:
         sentences = list(parse_amconll(f))
@@ -113,5 +100,3 @@ if __name__ == "__main__":
     print(s.get_heads())
 
     t = Tree.from_am_sentence(s)
-
-    print(list(x.node[0] for x in weird_order(t)))

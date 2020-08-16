@@ -61,17 +61,7 @@ if __name__ == "__main__":
 
     model : TopDownDependencyParser = model
 
-    if isinstance(model.transition_system, LTL):
-        print("Switching from LTL to DFSChildrenFirst")
-        model.transition_system = DFSChildrenFirst(model.transition_system.children_order, model.transition_system.pop_with_0,
-                                                   model.transition_system.additional_lexicon, model.transition_system.reverse_push_actions)
-    elif isinstance(model.transition_system, LTF):
-        print("Switching from LTF to DFS")
-        model.transition_system = DFS(model.transition_system.children_order, model.transition_system.pop_with_0,
-                                                   model.transition_system.additional_lexicon)
-    else:
-        print("Model you specified was neither LTL nor LTF")
-        sys.exit()
+    model.transition_system = model.transition_system.get_unconstrained_version()
 
     for beam_size in [int(s) for s in args.beams]:
         model.k_best = beam_size

@@ -3,7 +3,7 @@ from typing import List, Iterable, Optional, Tuple, Dict, Any
 import torch
 
 from topdown_parser.am_algebra.tree import Tree
-from topdown_parser.dataset_readers.AdditionalLexicon import AdditionalLexicon
+from topdown_parser.dataset_readers.additional_lexicon import AdditionalLexicon
 from topdown_parser.dataset_readers.amconll_tools import AMSentence
 from topdown_parser.transition_systems.batched_parsing_state import BatchedParsingState, BatchedStack, \
     BatchedListofList
@@ -13,9 +13,7 @@ from topdown_parser.transition_systems.transition_system import TransitionSystem
 
 
 class GPUDFSState(BatchedParsingState):
-
-    def is_complete(self) -> torch.Tensor:
-        return torch.all(self.stack.is_empty())
+    pass
 
 
 
