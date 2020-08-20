@@ -1,6 +1,6 @@
-python2 setup.py build
+python3 setup.py build
 
-cp build/lib.*-2.7/* .
+cp build/*/_smatch.so .
 
 #clean up by removing build files
 rm -rf build/
