@@ -1,6 +1,6 @@
 # A small example config.
 
-local num_epochs = 10;
+local num_epochs = 130; # small training corpus requires lots of epochs.
 local device = 0;
 
 local word_dim = 128;
@@ -20,10 +20,10 @@ local dropout_in = 0.33;
 
 local additional_lexicon = {
      "sublexica" : {
-            "edge_labels" : "data/AMR/2015/lexicon/edges.txt",
-            "constants" : "data/AMR/2015/lexicon/constants.txt",
-            "term_types" : "data/AMR/2015/lexicon/types.txt",
-            "lex_labels" : "data/AMR/2015/lexicon/lex_labels.txt"
+            "edge_labels" : "data/example_DM/lexicon/edges.txt",
+            "constants" : "data/example_DM/lexicon/constants.txt",
+            "term_types" : "data/example_DM/lexicon/types.txt",
+            "lex_labels" : "data/example_DM/lexicon/lex_labels.txt"
      }
 } ;
 
@@ -205,8 +205,8 @@ local data_iterator = {
         }
 
     },
-    "train_data_path": "data/AMR/2015/train/small.amconll",
-    "validation_data_path": "data/AMR/2015/gold-dev/gold-dev.amconll",
+    "train_data_path": "data/example_DM/train/train.amconll",
+    "validation_data_path": "data/example_DM/gold-dev/gold-dev.amconll",
 
     "evaluate_on_test" : false,
 
