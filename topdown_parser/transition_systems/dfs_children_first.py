@@ -7,14 +7,14 @@ import torch
 from topdown_parser.am_algebra.tree import Tree
 from topdown_parser.dataset_readers.additional_lexicon import AdditionalLexicon
 from topdown_parser.dataset_readers.amconll_tools import AMSentence
-from topdown_parser.transition_systems.parsing_state import CommonParsingState, ParsingState
+from topdown_parser.transition_systems.parsing_state import ParsingState
 from topdown_parser.transition_systems.transition_system import TransitionSystem
 from .decision import Decision
 #from topdown_parser.transition_systems.parsing_state import get_parent, get_siblings
 from topdown_parser.transition_systems.unconstrained_system import UnconstrainedTransitionSystem
 
 
-class DFSChildrenFirstState(CommonParsingState):
+class DFSChildrenFirstState(ParsingState):
 
     def __init__(self, decoder_state: Any, active_node: int, score: float,
                  sentence : AMSentence, lexicon : AdditionalLexicon,

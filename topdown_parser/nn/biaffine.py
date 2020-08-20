@@ -39,13 +39,21 @@ class BiaffineAttention(Module):
         torch.nn.init.constant_(self._bias, 0.)
 
     def set_input(self, matrix : torch.Tensor) -> None:
-        # matrix shape (batch_size, num_rows, matrix dim)
-        self.intermediate_matrix = F.linear(matrix, self._weight_matrix) #shape (batch_size, num_rows, vec dim)
-        self.matrix_term = torch.einsum("brv, v -> br", matrix, self.key_weight) # (batch_size, num_rows)
+        """
+        Set the input sentence.
+        :param matrix:  shape (batch_size, num_tokens, matrix dim)
+        :return:
+        """
+        self.intermediate_matrix = F.linear(matrix, self._weight_matrix) #shape (batch_size, num_tokens, vec dim)
+        self.matrix_term = torch.einsum("brv, v -> br", matrix, self.key_weight) # (batch_size, num_tokens)
 
     @overrides
     def forward(self, vector: torch.Tensor) -> torch.Tensor:
-        # vector shape (batch_size, vector dim)
+        """
+        Compute attention scores to all tokens in the input sentence
+        :param vector: shape (batch_size, vector dim)
+        :return: shape (batch_size, num_tokens), where num_tokens is determined by call to set_input.
+        """
 
         intermediate = torch.einsum("brv, bv -> br", self.intermediate_matrix, vector) #shape (batch_size, num_rows)
 

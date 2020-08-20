@@ -106,17 +106,3 @@ class BatchedParsingState:
         raise NotImplementedError()
 
 
-def undo_one_batching_gpu(context : Dict[str, torch.Tensor]) -> None:
-    """
-    Undo the effects introduced by gathering context with batch size 1 and batching them up.
-    This will mostly mean: do nothing or remove dimensions with size 1.
-    :param context:
-    """
-    # context["parents"] has size (batch_size, decision seq len, 1)
-    context["parents"] = context["parents"].squeeze(2)
-
-    context["children"] = context["children"].squeeze(2) # now (batch_size, input_seq_len, input_seq_len)
-    context["children_mask"] = context["children_mask"].squeeze(2) # now (batch_size, input_seq_len, input_seq_len)
-
-    if "lexical_types" in context:
-        context["lexical_types"] = context["lexical_types"].squeeze(2)

@@ -165,8 +165,7 @@ class AMConllDatasetReader(OrderedDatasetReader):
 
         state : ParsingState = self.transition_system.initial_state(stripped_sentence, None)
         active_nodes = [0]
-        #next_active = torch.tensor([0])
-        # print(am_sentence)
+
         contexts = dict()
         for i in range(1, len(decisions)):
             #Gather context
@@ -174,12 +173,8 @@ class AMConllDatasetReader(OrderedDatasetReader):
             for k, v in context.items():
                 if k not in contexts:
                     contexts[k] = []
-
-                # if len(v.shape) > 1: #remove batch dimension, we have only one batch element
-                #     v = v.squeeze(0)
-
                 contexts[k].append(v.cpu().numpy())
-            # print(i, next_active, decisions[i].position, self.transition_system.gather_context(next_active))
+
             state = self.transition_system.step(state, decisions[i], in_place=True)
 
             if i == len(decisions) - 1:  # there are no further active nodes after this step

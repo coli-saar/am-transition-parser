@@ -1,9 +1,10 @@
+# A small example config.
 
 local num_epochs = 10;
 local device = 0;
 
 local word_dim = 128;
-local char_dim = 16; #TODO Ma use 100
+local char_dim = 16;
 local num_filters = 50;
 local filters = [3];
 local max_filter = 3; //KEEP IN SYNC WITH filters!
@@ -15,7 +16,7 @@ local encoder_dim = 256;
 
 local dropout_in = 0.33;
 
-local eval_commands = import "eval_commands.libsonnet";
+#local eval_commands = import "eval_commands.libsonnet";
 
 local additional_lexicon = {
      "sublexica" : {
@@ -27,10 +28,7 @@ local additional_lexicon = {
 } ;
 
 local transition_system = {
-//    "type" : "dfs-children-first",
-//    "children_order" : "IO",
-//    "reverse_push_actions" : false
-    "type" : "ltl",
+    "type" : "ltl", #choices are: "dfs-children-first", "ltl", "ltf", or "dfs"
     "children_order" : "IO",
     "pop_with_0" : true,
     "additional_lexicon" : additional_lexicon,
@@ -95,30 +93,17 @@ local data_iterator = {
         "context_provider" : {
             "type" : "sum",
             "providers" : [
-//                  {"type" : "type-embedder", "hidden_dim" : 2*encoder_dim, "additional_lexicon" : additional_lexicon },
-//                                { "type" : "last-label-embedder",
-//                                "additional_lexicon" : additional_lexicon,
-//                                "hidden_dim" : 2*encoder_dim
-//                                "dropout" : 0.2
-//                                },
                   {"type" : "most-recent-child" }
             ]
         },
 
-//        "tagger_context_provider" :{ "type" : "label-embedder",
-//                                "additional_lexicon" : additional_lexicon,
-//                                "hidden_dim" : 2*encoder_dim,
-//                                "dropout" : 0.2
-//        },
 
         "supertagger" : {
             "type" : "combined-tagger",
-//            "type" : "no-decoder-tagger",
             "lexicon" : additional_lexicon,
             "namespace" : "constants",
             "mlp" : {
                 "input_dim" : 2*2*encoder_dim,
-//                "input_dim" : 2*encoder_dim,
                 "num_layers" : 1,
                 "hidden_dims" : 1024,
                 "dropout" : 0.0,
@@ -128,12 +113,10 @@ local data_iterator = {
 
         "lex_label_tagger" : {
             "type" : "combined-tagger",
-//            "type" : "no-decoder-tagger",
             "lexicon" : additional_lexicon,
             "namespace" : "lex_labels",
             "mlp" : {
                 "input_dim" : 2*2*encoder_dim,
-//                "input_dim" : 2*encoder_dim,
                 "num_layers" : 1,
                 "hidden_dims" : 1024,
                 "dropout" : 0.0,
@@ -141,6 +124,7 @@ local data_iterator = {
             }
         },
 
+// Comment this in if you use LTF:
 //        "term_type_tagger" : {
 //            "type" : "combined-tagger",
 //            "lexicon" : additional_lexicon,
@@ -169,12 +153,6 @@ local data_iterator = {
             "bidirectional" : true,
         },
 
-//        "tagger_decoder" : {
-//            "type" : "identity",
-//            "input_dim": 2*encoder_dim,
-//            "hidden_dim" : 2*encoder_dim,
-//        },
-
         "decoder" : {
             "type" : "ma-lstm",
             "input_dim": 2*encoder_dim,
@@ -202,31 +180,14 @@ local data_iterator = {
             }
         },
         "edge_model" : {
-//            "type" : "attention",
-//            "attention" : {
-//                "type" : "bilinear",
-//                "vector_dim" : 2*encoder_dim,
-//                "matrix_dim" : 2*encoder_dim
-//            }
-//            "type" : "ma",
-//            "mlp" : {
-//                    "input_dim" : 2*encoder_dim,
-//                    "num_layers" : 1,
-//                    "hidden_dims" : 256,
-//                    "activations" : "elu",
-//                    "dropout" : 0.1
-//            }
             "type" : "mlp",
             "encoder_dim" : 2*encoder_dim,
             "hidden_dim" : 256,
-//            "activation" : "elu"
         },
         "edge_label_model" : {
-            #"type" : "ma",
             "type" : "simple",
             "lexicon" : additional_lexicon,
             "mlp" : {
-                #"input_dim" : 2*encoder_dim,
                 "input_dim" : 2*2*encoder_dim,
                 "num_layers" : 1,
                 "hidden_dims" : [256],
@@ -273,6 +234,5 @@ local data_iterator = {
         }
     },
 
-//    "callbacks" : eval_commands["AMR-2015"]
 }
 

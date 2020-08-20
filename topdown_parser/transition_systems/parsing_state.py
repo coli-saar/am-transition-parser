@@ -9,40 +9,7 @@ from topdown_parser.dataset_readers.additional_lexicon import AdditionalLexicon
 
 import numpy as np
 
-@dataclass
-class ParsingState:
-
-    decoder_state : Any
-    active_node : int
-    score : float
-    lexicon : AdditionalLexicon
-
-    def is_complete(self) -> bool:
-        raise NotImplementedError()
-
-    def extract_tree(self) -> AMSentence:
-        raise NotImplementedError()
-
-    def gather_context(self, device : int) -> Dict[str, torch.Tensor]:
-        """
-        Extracts features of the current context like siblings, grandparents etc.
-        :param device: id of device which to put on the tensors.
-        :return: a dictionary which can be used for storing
-        various kinds of information, we can condition on.
-        """
-        raise NotImplementedError()
-
-    def copy(self) -> "ParsingState":
-        """
-        A way of copying this parsing state such that modifying objects that constrain the future
-        will be modifying copied objects. e.g. we need a deep copy of the stack and nodes seen already
-        but we don't need a deep copy of the decoder state or the lexicon.
-        :return:
-        """
-        raise NotImplementedError()
-
-
-class CommonParsingState(ParsingState, ABC):
+class ParsingState(ABC):
 
     def __init__(self,decoder_state: Any, active_node: int, score: float,
                  sentence : AMSentence, lexicon : AdditionalLexicon,
@@ -50,7 +17,10 @@ class CommonParsingState(ParsingState, ABC):
                  edge_labels : List[str], constants: List[Tuple[str,str]], lex_labels: List[str],
                  stack: List[int], seen: Set[int]):
 
-        super().__init__(decoder_state, active_node, score, lexicon)
+        self.decoder_state = decoder_state
+        self.active_node = active_node
+        self.score = score
+        self.lexicon = lexicon
 
         self.sentence = sentence
         self.heads = heads
@@ -61,6 +31,15 @@ class CommonParsingState(ParsingState, ABC):
         self.seen = seen
         self.stack = stack
 
+    def copy(self) -> "ParsingState":
+        """
+        A way of copying this parsing state such that modifying objects that constrain the future
+        will be modifying copied objects. e.g. we need a deep copy of the stack and nodes seen already
+        but we don't need a deep copy of the decoder state or the lexicon.
+        :return:
+        """
+        raise NotImplementedError()
+
     def extract_tree(self) -> AMSentence:
         sentence = self.sentence.set_heads(self.heads)
         sentence = sentence.set_labels(self.edge_labels)
@@ -70,10 +49,15 @@ class CommonParsingState(ParsingState, ABC):
             sentence = sentence.set_lexlabels(self.lex_labels)
         return sentence
 
+    def is_complete(self) -> bool:
+        raise NotImplementedError()
+
     def gather_context(self, device) -> Dict[str, torch.Tensor]:
         """
-        Helper function to gather the context
-        :return:
+        Extracts features of the current context like children, parents etc.
+        :param device: id of device which to put on the tensors.
+        :return: a dictionary which can be used for storing
+        various kinds of information, we can condition on.
         """
 
         # siblings: List[int] = get_siblings(self.children, self.heads, self.active_node)
@@ -149,6 +133,7 @@ def get_parent(heads : List[int], node : int) -> int:
     """
     parent = heads[node-1]
     return parent
+
 
 def get_siblings(children : Dict[int, List[int]], heads : List[int], node: int) -> List[int]:
     """

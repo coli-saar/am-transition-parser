@@ -2,6 +2,7 @@ import argparse
 import json
 import sys
 
+import os
 from allennlp.common.util import prepare_environment, import_submodules
 from allennlp.models import load_archive
 from allenpipeline import PipelineTrainerPieces
@@ -63,10 +64,12 @@ if __name__ == "__main__":
 
     model.transition_system = model.transition_system.get_unconstrained_version()
 
+    model_dir = os.path.dirname(args.archive_file)
+
     for beam_size in [int(s) for s in args.beams]:
         model.k_best = beam_size
 
-        filename = args.archive_file+f"/dev_well_typedness_k_{beam_size}.txt"
+        filename = os.path.join(model_dir,f"dev_well_typedness_k_{beam_size}.txt")
         annotator.annotate_file(model, parse_dev.system_input, filename)
         cumulated_parse_time = 0.0
         well_typed = 0
@@ -81,7 +84,7 @@ if __name__ == "__main__":
             metrics["well_typed_" + parse_dev.prefix + "k_" + str(beam_size)+"_percent"] = (well_typed/total) * 100
 
     print("Metrics", metrics)
-    with open(args.archive_file+"/well_typed_metrics.json", "w") as f:
+    with open(os.path.join(model_dir, "well_typed_metrics.json"), "w") as f:
         f.write(json.dumps(metrics))
 
 

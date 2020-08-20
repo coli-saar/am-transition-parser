@@ -1,6 +1,7 @@
 import argparse
 import json
 
+import os
 from allennlp.common.util import prepare_environment, import_submodules
 from allennlp.models import load_archive
 from allenpipeline import PipelineTrainerPieces
@@ -52,12 +53,13 @@ if __name__ == "__main__":
     parse_test : ParseTest = pipelinepieces.callbacks.callbacks[CallbackName.AFTER_TRAINING.value]
     parse_test.active = True
     metrics = dict()
+    model_dir = os.path.dirname(args.archive_file)
 
     for beam_size in [int(s) for s in args.beams]:
         model.k_best = beam_size
 
         for i in range(len(parse_test.system_inputs)):
-            filename = args.archive_file+f"/test_{parse_test.names[i]}_k_{beam_size}.txt"
+            filename = os.path.join(model_dir, f"test_{parse_test.names[i]}_k_{beam_size}.txt")
             annotator.annotate_file(model, parse_test.system_inputs[i], filename)
             cumulated_parse_time = 0.0
             with open(filename) as f:
@@ -69,7 +71,7 @@ if __name__ == "__main__":
             metrics["time_"+parse_test.names[i]+"_k_"+str(beam_size)] = cumulated_parse_time
 
     print("Metrics", metrics)
-    with open(args.archive_file+"/test_metrics.json", "w") as f:
+    with open(os.path.join(model_dir, "test_metrics.json"), "w") as f:
         f.write(json.dumps(metrics))
 
 

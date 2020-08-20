@@ -8,6 +8,10 @@ from torch.nn import Parameter
 
 from topdown_parser.nn.decoder_cell import DecoderCell
 
+"""
+This is based on code from Ma et al. (2018): 
+"""
+
 
 def VarFastLSTMCellF(input, hidden, w_ih, w_hh, b_ih=None, b_hh=None, noise_in=None, noise_hidden=None):
     if noise_in is not None:

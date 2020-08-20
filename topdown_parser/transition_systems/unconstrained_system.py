@@ -5,7 +5,7 @@ import torch
 from topdown_parser.dataset_readers.additional_lexicon import AdditionalLexicon
 from topdown_parser.dataset_readers.amconll_tools import AMSentence
 from topdown_parser.nn.edge_label_model import EdgeLabelModel
-from topdown_parser.transition_systems.parsing_state import CommonParsingState
+from topdown_parser.transition_systems.parsing_state import ParsingState
 from topdown_parser.transition_systems.transition_system import Decision, TransitionSystem
 from topdown_parser.transition_systems.utils import single_score_to_selection
 
@@ -23,7 +23,7 @@ class UnconstrainedTransitionSystem(TransitionSystem):
     def predict_supertag_from_tos(self) -> bool:
         return True
 
-    def make_decision(self, scores: Dict[str, torch.Tensor], state : CommonParsingState) -> Decision:
+    def make_decision(self, scores: Dict[str, torch.Tensor], state : ParsingState) -> Decision:
         # Select node:
         child_scores = scores["children_scores"].detach().cpu() # shape (input_seq_len)
         #Cannot select nodes that we have visited already.
@@ -56,7 +56,7 @@ class UnconstrainedTransitionSystem(TransitionSystem):
         pop = (selected_node == 0 and self.pop_with_0) or (selected_node == state.active_node and not self.pop_with_0)
         return Decision(selected_node, pop, selected_label, AMSentence.split_supertag(selected_supertag), selected_lex_label, score=score)
 
-    def top_k_decision(self, scores: Dict[str, torch.Tensor], state : CommonParsingState, k : int) -> List[Decision]:
+    def top_k_decision(self, scores: Dict[str, torch.Tensor], state: ParsingState, k : int) -> List[Decision]:
         # Select node:
         child_scores = scores["children_scores"] # shape (input_seq_len)
         #Cannot select nodes that we have visited already (except if not pop with 0 and currently active, then we can close).

@@ -7,13 +7,13 @@ import torch
 from topdown_parser.am_algebra.tree import Tree
 from topdown_parser.dataset_readers.additional_lexicon import AdditionalLexicon
 from topdown_parser.dataset_readers.amconll_tools import AMSentence
-from topdown_parser.transition_systems.parsing_state import CommonParsingState, ParsingState
+from topdown_parser.transition_systems.parsing_state import ParsingState
 from topdown_parser.transition_systems.transition_system import TransitionSystem
 from .decision import Decision
 from topdown_parser.transition_systems.unconstrained_system import UnconstrainedTransitionSystem
 
 
-class DFSState(CommonParsingState):
+class DFSState(ParsingState):
 
     def is_complete(self) -> bool:
         return self.stack == []

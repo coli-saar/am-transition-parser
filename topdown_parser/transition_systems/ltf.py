@@ -16,7 +16,7 @@ from topdown_parser.dataset_readers.amconll_tools import AMSentence
 from topdown_parser.nn.edge_label_model import EdgeLabelModel
 from topdown_parser.nn.utils import get_device_id
 from topdown_parser.transition_systems import utils
-from topdown_parser.transition_systems.parsing_state import CommonParsingState, ParsingState
+from topdown_parser.transition_systems.parsing_state import ParsingState
 from topdown_parser.transition_systems.transition_system import TransitionSystem
 from .decision import Decision
 from topdown_parser.transition_systems.utils import scores_to_selection, get_best_constant, single_score_to_selection, \
@@ -56,7 +56,7 @@ def collect_sources(additional_lexicon : AdditionalLexicon) -> Set[str]:
             sources.add(label.split("_")[1])
     return sources
 
-class LTFState(CommonParsingState):
+class LTFState(ParsingState):
 
     def __init__(self, decoder_state: Any, active_node: int, score: float, sentence: AMSentence,
                  lexicon: AdditionalLexicon, heads: List[int], children: Dict[int, List[int]], edge_labels: List[str],
@@ -184,30 +184,6 @@ class LTF(TransitionSystem):
             return ret
 
         return _construct_seq(t, False, ("",""),"", AMType.parse_str("_"))
-
-    # def reset_parses(self, sentences: List[AMSentence], input_seq_len: int) -> None:
-    #     self.input_seq_len = input_seq_len
-    #     self.batch_size = len(sentences)
-    #     self.stack = [[0] for _ in range(self.batch_size)]  # 1-based
-    #     self.seen = [{0} for _ in range(self.batch_size)]
-    #     self.heads = [[0 for _ in range(len(sentence.words))] for sentence in sentences]
-    #     self.children = [{i: [] for i in range(len(sentence.words) + 1)} for sentence in sentences]  # 1-based
-    #     self.labels = [["IGNORE" for _ in range(len(sentence.words))] for sentence in sentences]
-    #     self.lex_labels = [["_" for _ in range(len(sentence.words))] for sentence in sentences]
-    #     self.supertags = [["_--TYPE--_" for _ in range(len(sentence.words))] for sentence in sentences]
-    #     self.lexical_types = [[AMType.parse_str("_") for _ in range(len(sentence.words))] for sentence in sentences]
-    #     self.applysets_todo = [[None for _ in range(len(sentence.words))] for sentence in sentences]
-    #     self.words_left = [len(sentence.words) for sentence in sentences]
-    #     self.sentences = sentences
-    #     self.root_determined = [False for _ in sentences]
-
-
-    # def _sources_to_be_filled(self, i : int) -> int:
-    #     s = 0
-    #     for applyset_todo in self.applysets_todo[i]:
-    #         if applyset_todo is not None:
-    #             s += len(applyset_todo)
-    #     return s
 
     def initial_state(self, sentence : AMSentence, decoder_state : Any) -> ParsingState:
         stack = [0]
@@ -439,7 +415,7 @@ class LTF(TransitionSystem):
                              "necessarily fit to the locally best child")
 
         if state.root_determined and state.active_node == 0:
-            return [Decision(0, "", ("",""), "", termtyp=None, score=0.0)]
+            return [Decision(0, False, "", ("",""), "", termtyp=None, score=0.0)]
 
 
         # Find best constants, if we have to choose them:
@@ -500,7 +476,7 @@ class LTF(TransitionSystem):
 
                 if not state.root_determined:
                     if selected_node != 0: # First decision must choose root.
-                        decisions.append(Decision(int(selected_node), "ROOT", ("",""), "",termtyp=None, score=float(node_score)))
+                        decisions.append(Decision(int(selected_node),False, "ROOT", ("",""), "",termtyp=None, score=float(node_score)))
                     continue
 
                 #Check if we must not close the current node

@@ -165,9 +165,9 @@ class GPULTL(LTL):
         self.app_source2label_id = torch.zeros((len_sources, len_labels), dtype=torch.bool) # maps a source id to the respective (APP) label id
         self.mod_tensor = torch.zeros(len_labels, dtype=torch.bool) #which label ids are MOD_ edge labels?
         self.label_id2appsource = torch.zeros(len_labels, dtype=torch.long)-1
-        self.applyset_term_types = torch.from_numpy(applyset_term_types)
-        self.get_term_types = torch.from_numpy(get_term_types)
-        self.apply_reachable_term_types = torch.from_numpy(apply_reachable_term_types)
+        self.applyset_term_types = torch.from_numpy(applyset_term_types) # shape (TERM TYPE, lexical type, source); is the given source in the apply set from the lexical type to the term type?
+        self.get_term_types = torch.from_numpy(get_term_types) #shape (parent lexical type, incoming label, term type)
+        self.apply_reachable_term_types = torch.from_numpy(apply_reachable_term_types) # shape (TERM type, lexial type)
 
         for label, label_id in self.additional_lexicon.sublexica["edge_labels"]:
             if label.startswith("MOD_"):
@@ -189,6 +189,11 @@ class GPULTL(LTL):
         return True
 
     def prepare(self, device: Optional[int]):
+        """
+        Move precomputed arrays to GPU.
+        :param device:
+        :return:
+        """
         self.lexical2constant = make_bool_multipliable(self.lexical2constant.to(device))
         self.constant2lexical = self.constant2lexical.to(device)
 
@@ -202,11 +207,10 @@ class GPULTL(LTL):
 
         self.apply_set_size = self.applyset_term_types.sum(dim=2) #shape (term types, lexical types)
 
-
     def guarantees_well_typedness(self) -> bool:
         return True
 
-    def add_missing_edge_scores(self, edge_scores : torch.Tensor) -> torch.Tensor:
+    def _add_missing_edge_scores(self, edge_scores : torch.Tensor) -> torch.Tensor:
         """
         Add edge scores for APP_x where x is a known source but APP_x was never seen in training
         :param edge_scores: shape (batch_size, number of edge_labels)
@@ -215,7 +219,7 @@ class GPULTL(LTL):
         if edge_scores.shape[1] == self.additional_lexicon.vocab_size("edge_labels"):
             return edge_scores
         additional_scores = torch.zeros((edge_scores.shape[0], len(self.additional_apps)), device=get_device_id(edge_scores))
-        additional_scores -= 10_000_000 # unseen edge are very unlikely
+        additional_scores -= 10_000_000 # unseen edges are very unlikely
         return torch.cat((edge_scores, additional_scores), dim=1)
 
 
@@ -247,12 +251,11 @@ class GPULTL(LTL):
     def gpu_make_decision(self, scores: Dict[str, torch.Tensor], state : GPULTLState) -> DecisionBatch:
         children_scores = scores["children_scores"] #shape (batch_size, input_seq_len)
         batch_size, input_seq_len = children_scores.shape
-        parent_mask = state.parent_mask()
+        parent_mask = state.parent_mask()  #shape (batch_size, input_seq_len)
         mask = parent_mask #shape (batch_size, input_seq_len)
-        depth = state.stack.depth() #shape (batch_size,)
-        active_nodes = state.stack.peek()
-        batch_range = state.stack.batch_range
-        applyset = state.applyset[batch_range, active_nodes]
+        active_nodes = state.stack.peek() #shape (batch_size,)
+        batch_range = state.stack.batch_range #shape (batch_size,)
+        applyset = state.applyset[batch_range, active_nodes] # shape (batch_size, sources);  applyset[b,s] = state.apply_set[b, active_nodes[b], s]
         done = state.stack.get_done() #shape (batch_size,)
 
         if state.step < 2:
@@ -266,7 +269,7 @@ class GPULTL(LTL):
                 mask = torch.zeros_like(mask)
                 mask[:, 0] = 1
                 push_mask = torch.zeros(batch_size, dtype=torch.bool, device=get_device_id(children_scores))
-                edge_labels = torch.argmax(scores["all_labels_scores"][:, 0], 1)
+                edge_labels = torch.argmax(scores["all_labels_scores"][:, 0], 1) #shape (batch_size,) -- dummy labels
 
             mask = (1-mask.long())*10_000_000
             _, selected_nodes = torch.max(children_scores - mask, dim=1)
@@ -276,8 +279,8 @@ class GPULTL(LTL):
 
             return DecisionBatch(selected_nodes, push_mask, ~push_mask, edge_labels, constants, None, lex_labels, ~push_mask)
 
-        parents = state.heads[batch_range, active_nodes] #shape (batch_size,)
-        lexical_type_parent = state.lex_types[batch_range, parents] #shape (batch_size, )
+        parents = state.heads[batch_range, active_nodes] #shape (batch_size,); parents[b] = state.heads[b,active_nodes[b]]
+        lexical_type_parent = state.lex_types[batch_range, parents] #shape (batch_size, ); lexical_type_parent[b] = state.lex_types[b,parents[b]]
         assert lexical_type_parent.shape == (batch_size,)
         incoming_labels = state.edge_labels[batch_range, active_nodes] #shape (batch_size,) with ids of incoming edge labels of active nodes
 
@@ -285,20 +288,23 @@ class GPULTL(LTL):
         assert possible_term_types.shape == (batch_size, len(self.lextyp2i))
 
         overlap = torch.einsum("tls, bs -> btl", self.applyset_term_types, applyset) #shape (batch_size, term_type, lexical)
-        overlap -= 10_000_000 * ~(self.apply_reachable_term_types.unsqueeze(0) * possible_term_types.unsqueeze(2))
+        #overlap[b,t,l] = \sum_s self.apply_term_types[t,l,s] * applyset[b,s]
+
+        #Now
         #mask out combinations that are not possible
         # either because the combination is not apply-reachable
         # or because the term type is not allowed here.
+        overlap -= 10_000_000 * ~(self.apply_reachable_term_types.unsqueeze(0) * possible_term_types.unsqueeze(2))
 
         apply_set_size = applyset.sum(dim=1)
         consistent_term_type_lex_type_combos = are_eq(overlap, apply_set_size.unsqueeze(1).unsqueeze(2)) #shape (batch_size, term_type, lexical)
-        # is the collected apply set a subset of the actual apply set?
+        # is the collected apply set a subset of the actual apply set? (and apply reachable)
 
         can_finish_now = are_eq(self.apply_set_size, overlap) #shape (batch_size, term_type, lexical)
         # containing the information whether the actual apply set is a subset of the collected apply set
 
-        can_finish_now &= consistent_term_type_lex_type_combos  #shape (batch_size, lexical types)
-        can_finish_now = torch.any(can_finish_now, dim=1)
+        can_finish_now &= consistent_term_type_lex_type_combos  #shape (batch_size, term types, lexical types)
+        can_finish_now = torch.any(can_finish_now, dim=1) #shape (batch_size, lexical types)
 
         assert can_finish_now.shape == (batch_size, len(self.lextyp2i))
 
@@ -307,6 +313,8 @@ class GPULTL(LTL):
         # and b) there is lexical type for our apply set and set of term types
         finishable = torch.any(can_finish_now, dim=1) #shape (batch_size,)
         assert finishable.shape == (batch_size, )
+        depth = state.stack.depth() #shape (batch_size,)
+
         if self.pop_with_0:
             mask[batch_range, 0] &= (depth > 0)
             mask[:, 0] &= finishable
@@ -339,16 +347,14 @@ class GPULTL(LTL):
         selected_constants = torch.argmax(scores["constants_scores"]-constant_mask, dim=1) #shape (batch_size,)
 
         # Edge labels
-
         # We create masks for what edges are appropriate
 
         # How many sources do we still need for a certain term type / lexical type combination?
-
         #                     (term type, lexical type)       (bs,)
         num_todo_sources = self.apply_set_size.unsqueeze(0) - apply_set_size.unsqueeze(1).unsqueeze(2) #shape (batch_size, term type, lexical type)
         # This uses the fact that |X - Y| = |X| - |Y| if Y is a subset of X, we catch the case ~(Y not subset of X) by considering only consistent combinations!
 
-        # which combination of term type/lexical type does still work here?
+        # which combination of term type/lexical type does still work here (taking into account how many tokens are left)?
         consistent_term_type_lex_type_combos *= num_todo_sources <= state.w_c.unsqueeze(1).unsqueeze(2) #shape (batch_size, term type, lexical type)
         assert consistent_term_type_lex_type_combos.shape == (batch_size, len(self.lextyp2i), len(self.lextyp2i))
 
@@ -358,6 +364,7 @@ class GPULTL(LTL):
         #possible_app_sources = torch.einsum("btl, tls -> bs", make_bool_multipliable(consistent_term_type_lex_type_combos),
         #                                    self.applyset_term_types) > 0
         possible_app_sources = torch.any(torch.any(consistent_term_type_lex_type_combos.unsqueeze(3) * self.applyset_term_types.unsqueeze(0).bool(), dim=1), dim=1)
+        # shape (batch_size, source); possible_app_sourcwes[b,s] = \exists t,l such that consistent_term_type_lex_type_combos[b,t,l] AND self.applyset_term_types[t,l,s]
 
         #  mask out all sources that have been used already
         possible_app_sources &= ~applyset.bool()
@@ -377,12 +384,12 @@ class GPULTL(LTL):
         #  translate source mask to edge label mask
         edge_mask = index_or(make_bool_multipliable(possible_app_sources), self.app_source2label_id) #shape (batch_size, edge labels)
 
-        edge_mask[mod_mask, :] |= self.mod_tensor #for some positions, we can also use MOD
+        edge_mask[mod_mask, :] |= self.mod_tensor #if we can use some MOD_x, we can use all MOD_x.
         edge_mask[:, self.additional_lexicon.get_id("edge_labels", "ROOT")] = False
         if self.enable_assert:
             assert torch.all(torch.any(edge_mask, dim=1) | pop_mask | done) #always at least one edge label (or we pop anyway).
 
-        edge_scores = self.add_missing_edge_scores(scores["all_labels_scores"][state.stack.batch_range, selected_nodes]) #shape (batch_size, edge labels)
+        edge_scores = self._add_missing_edge_scores(scores["all_labels_scores"][state.stack.batch_range, selected_nodes]) #shape (batch_size, edge labels)
 
         edge_labels = torch.argmax(edge_scores - 10_000_000 * (~edge_mask).float(), 1)
 

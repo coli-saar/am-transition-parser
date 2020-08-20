@@ -8,7 +8,7 @@ SEPARATOR = "@--@"
 
 class ContextField(Field):
     """
-    A field with multiple named subfields that are listfields.
+    A field with multiple named subfields that themselves are ListFields.
     """
 
     def __init__(self, data : Dict[str, ListField]) -> None:
@@ -23,7 +23,7 @@ class ContextField(Field):
                 sub_padding_lengths[subfname] = dict()
             sub_padding_lengths[subfname][rest] = v
 
-        return { name : val.as_tensor(sub_padding_lengths[name]) for name, val in self.data.items()}
+        return {name: val.as_tensor(sub_padding_lengths[name]) for name, val in self.data.items()}
 
     def empty_field(self) -> 'Field':
         return ContextField(dict())

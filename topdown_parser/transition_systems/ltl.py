@@ -10,7 +10,7 @@ from topdown_parser.am_algebra.tree import Tree
 from topdown_parser.dataset_readers.additional_lexicon import AdditionalLexicon
 from topdown_parser.dataset_readers.amconll_tools import AMSentence
 from topdown_parser.transition_systems.ltf import typ2supertag, typ2i, collect_sources
-from topdown_parser.transition_systems.parsing_state import CommonParsingState, ParsingState
+from topdown_parser.transition_systems.parsing_state import ParsingState
 from topdown_parser.transition_systems.transition_system import TransitionSystem
 from .decision import Decision
 
@@ -22,7 +22,7 @@ import heapq
 import numpy as np
 
 
-class LTLState(CommonParsingState):
+class LTLState(ParsingState):
 
     def __init__(self, decoder_state: Any, active_node: int, score: float, sentence: AMSentence,
                  lexicon: AdditionalLexicon, heads: List[int], children: Dict[int, List[int]], edge_labels: List[str],
@@ -403,12 +403,12 @@ class LTL(TransitionSystem):
             assert label_scores.shape == (self.additional_lexicon.vocab_size("edge_labels"),)
 
             if not state.root_determined:
-                decisions.append(Decision(int(selected_node), "ROOT", ("",""), "",termtyp=None, score=node_score))
+                decisions.append(Decision(int(selected_node), False, "ROOT", ("",""), "",termtyp=None, score=node_score))
                 continue
 
             if state.step == 1 or state.active_node == 0:
                 #we are done (or after first step), do nothing.
-                decisions.append(Decision(0, "", ("",""), "", score=0.0))
+                decisions.append(Decision(0, False, "", ("",""), "", score=0.0))
                 break
 
             if (selected_node in state.seen and not self.pop_with_0) or (selected_node == 0 and self.pop_with_0):
@@ -421,7 +421,7 @@ class LTL(TransitionSystem):
                 assert len(possible_lex_types) > 0
                 for lex_type in possible_lex_types:
                     constant, constant_score = get_best_constant(self.typ2supertag[lex_type], constant_scores)
-                    decisions.append(Decision(pop_node, "", AMSentence.split_supertag(self.additional_lexicon.get_str_repr("constants", constant)),
+                    decisions.append(Decision(pop_node, True, "", AMSentence.split_supertag(self.additional_lexicon.get_str_repr("constants", constant)),
                                                    selected_lex_label, score=constant_score + node_score))
 
                 # for term_typ in state.term_types[state.active_node-1]:
@@ -448,12 +448,12 @@ class LTL(TransitionSystem):
 
             apply_ids = {self.additional_lexicon.get_id("edge_labels", "APP_"+source) for source in possible_sources}
             for edge_id, apply_score in get_top_k_choices(apply_ids, label_scores, k):
-                decisions.append(Decision(int(selected_node), self.additional_lexicon.get_str_repr("edge_labels", edge_id), ("",""), "", score = node_score+apply_score))
+                decisions.append(Decision(int(selected_node), False, self.additional_lexicon.get_str_repr("edge_labels", edge_id), ("",""), "", score = node_score+apply_score))
 
             # MOD
             if state.words_left - smallest_apply_set > 0:
                 for edge_id, modify_score in get_top_k_choices(self.modify_ids, label_scores, k):
-                    decisions.append(Decision(int(selected_node), self.additional_lexicon.get_str_repr("edge_labels", edge_id), ("",""), "", score = node_score+modify_score))
+                    decisions.append(Decision(int(selected_node), False, self.additional_lexicon.get_str_repr("edge_labels", edge_id), ("",""), "", score = node_score+modify_score))
 
         return decisions
 

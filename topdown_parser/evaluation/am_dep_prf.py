@@ -3,11 +3,12 @@ import argparse
 from collections import namedtuple
 import sys
 
-### usage: python3 am_dep_las.py filename1 filename2
+### usage: python3 am_dep_prf.py filename1 filename2
 ###
 ### Both files need to contain the same sentences in the same order + same format.
 ###
 ### author: ML
+# this was used for table 5.6 in my thesis.
 
 optparser = argparse.ArgumentParser(add_help=True,
     description="reads two amconll files and computes UAS, LAS and supertagging accuracy. Supertags have to come from the same decomposition (string comparison!)")
