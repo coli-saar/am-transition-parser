@@ -350,6 +350,13 @@ class TopDownDependencyParser(Model):
         if self.term_type_tagger is not None:
             self.term_type_tagger.set_input(state["encoded_input_for_tagging"], state["input_mask"])
 
+        if self.context_provider:
+            batch_size, input_seq_len, encoder_dim = state["encoded_input"].shape
+            device = get_device_id(state["encoded_input"])
+            range_batch_size = get_range_vector(batch_size, device)
+            self.context_provider.set_batch_range(range_batch_size)
+
+
     def compute_loss(self, state: Dict[str, torch.Tensor], seq: torch.Tensor, active_nodes : torch.Tensor,
                      labels: torch.Tensor, label_mask: torch.Tensor,
                      supertags : torch.Tensor, supertag_mask : torch.Tensor,
@@ -582,9 +589,6 @@ class TopDownDependencyParser(Model):
 
         range_batch_size = get_range_vector(batch_size, device)
 
-        if self.context_provider:
-            self.context_provider.set_batch_range(range_batch_size)
-
         parsing_states = [self.transition_system.initial_state(sentence, None) for sentence in sentences]
 
         for step in range(output_seq_len):
@@ -692,9 +696,6 @@ class TopDownDependencyParser(Model):
         next_active_nodes = torch.zeros(batch_size, dtype=torch.long, device = device) #start with artificial root.
 
         range_batch_size = get_range_vector(batch_size, get_device_of(state["encoded_input"]))
-
-        if self.context_provider:
-            self.context_provider.set_batch_range(range_batch_size)
 
         parsing_states: BatchedParsingState = self.transition_system.gpu_initial_state(sentences, None, device=device)
 
@@ -804,9 +805,6 @@ class TopDownDependencyParser(Model):
         next_active_nodes = torch.zeros(k*batch_size, dtype=torch.long, device = device) #start with artificial root.
 
         range_batch_size = get_range_vector(k*batch_size, device)
-
-        if self.context_provider:
-            self.context_provider.set_batch_range(range_batch_size)
 
         parsing_states : List[List[ParsingState]] = []
         decoder_states_full = self.decoder.get_full_states()
