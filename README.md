@@ -2,14 +2,14 @@
 A top-down transition-based AM dependency parser with quadratic run time complexity and well-typedness guarantees.
 Implemented are the LTF and LTL transition systems and unconstrained versions for normal dependency parsing.
 
-##Steps for setting up
+## Steps for setting up
 - Create a conda environment with python 3.8
 - `pip install -r requirements.txt`
 - Copy the corpora with AM dependency trees to `data/`. They should be organized in the way the decomposition scripts in [am-parser](https://github.com/coli-saar/am-parser) create them (see also the wiki!). See the bottom of the page, which directory structure we assume.
 - `bash scripts/setup.sh`, which will download am-tools (large file!) and WordNet.
 - `bash scripts/create_all_lexica.sh` will create lexica with graph constants, edge labels and types. 
 
-##Training a model
+## Training a model
 Select an appropriate configuration file (e.g. `training_configs/bert/DM.jsonnet`) and run the following command:
 ```
 python -m allenpipeline train <your config.jsonnet> -s models/<your model name> --include-package topdown_parser
@@ -17,7 +17,7 @@ python -m allenpipeline train <your config.jsonnet> -s models/<your model name> 
 You can use other command line arguments as well, see `python -m allenpipeline train --help`, in particular you can select the cuda device as follows:
 `-o '{trainer : {cuda_device : 0  } }'`.
 
-##Parsing
+## Parsing
 There are different ways to parse, depending on what you want.
 
  - You want to parse the testset of a graphbank. Make sure, the folders in `data/` follow what the model expects (see `config.json` in the model directory -- you can also modify this file but create a backup!).
