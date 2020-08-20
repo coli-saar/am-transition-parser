@@ -350,11 +350,6 @@ class TopDownDependencyParser(Model):
         if self.term_type_tagger is not None:
             self.term_type_tagger.set_input(state["encoded_input_for_tagging"], state["input_mask"])
 
-        if self.context_provider:
-            batch_size, input_seq_len, encoder_dim = state["encoded_input"].shape
-            device = get_device_id(state["encoded_input"])
-            range_batch_size = get_range_vector(batch_size, device)
-            self.context_provider.set_batch_range(range_batch_size)
 
 
     def compute_loss(self, state: Dict[str, torch.Tensor], seq: torch.Tensor, active_nodes : torch.Tensor,

@@ -17,18 +17,6 @@ class ContextProvider(Module, Registrable):
     and computes a fixed vector that is used as input to the decoder.
     """
 
-    def __init__(self):
-        super().__init__()
-        self.batch_range = None
-
-    def set_batch_range(self, batch_range: torch.Tensor) -> None:
-        """
-        Hand the context provider a tensor that might be useful to extract context information particularly efficiently.
-        :param batch_range: Tensor of shape (batch_size,) which is the tensorized version of range(batch_size).
-        :return:
-        """
-        self.batch_range = batch_range
-
     def forward(self, current_node : torch.Tensor, state : Dict[str, torch.Tensor], context : Dict[str, torch.Tensor]) -> torch.Tensor:
         """
         Compute the representation that is used as input to the decoder network.
@@ -79,7 +67,7 @@ class ParentContextProvider(ContextProvider):
 
         parents = context["parents"] # shape (batch_size,)
 
-        encoded_parents = state["encoded_input"][self.batch_range, parents] # shape (batch_size, encoder dim)
+        encoded_parents = state["encoded_input"][range(batch_size), parents] # shape (batch_size, encoder dim)
 
         #mask = parents == 0 # which parents are 0? Skip those
         #encoded_parents=  mask.unsqueeze(1) * encoded_parents
@@ -104,9 +92,6 @@ class MostRecent(ContextProvider):
         self.context_key = context_key
         self.mask_key = mask_key
 
-    def set_batch_range(self, batch_range: torch.Tensor) -> None:
-        self.batch_range = batch_range
-
     def compute_context(self, state : Dict[str, torch.Tensor], context : Dict[str, torch.Tensor]) -> torch.Tensor:
         # For the sake of the example, let's say we're looking for siblings
         siblings = context[self.context_key] #shape (batch_size, max_num_siblings)
@@ -116,9 +101,9 @@ class MostRecent(ContextProvider):
 
         number_of_siblings = get_lengths_from_binary_sequence_mask(sibling_mask) # (batch_size,)
 
-        most_recent_sibling = siblings[self.batch_range, number_of_siblings-1] # shape (batch_size,)
+        most_recent_sibling = siblings[range(batch_size), number_of_siblings-1] # shape (batch_size,)
 
-        encoded_sibling = state["encoded_input"][self.batch_range, most_recent_sibling] # shape (batch_size, encoder_dim)
+        encoded_sibling = state["encoded_input"][range(batch_size), most_recent_sibling] # shape (batch_size, encoder_dim)
 
         # Some nodes don't have siblings, mask them out:
         encoded_sibling = (number_of_siblings != 0).unsqueeze(1) * encoded_sibling #shape (batch_size, encoder_dim)
@@ -140,7 +125,6 @@ class SiblingContextProvider(ContextProvider):
         self.most_recent = MostRecent("children", "children_mask")
 
     def compute_context(self, state : Dict[str, torch.Tensor], context : Dict[str, torch.Tensor]) -> torch.Tensor:
-        self.most_recent.set_batch_range(self.batch_range)
         return self.most_recent.compute_context(state, context)
 
     def forward(self, current_node : torch.Tensor, state : Dict[str, torch.Tensor], context : Dict[str, torch.Tensor]) -> torch.Tensor:
@@ -162,11 +146,6 @@ class SumContextProver(ContextProvider):
         self.providers = providers
         for i, p in enumerate(providers):
             self.add_module("_sum_context_provider_"+str(i), p)
-
-    def set_batch_range(self, batch_range: torch.Tensor) -> None:
-        self.batch_range = batch_range
-        for p in self.providers:
-            p.set_batch_range(batch_range)
 
     def forward(self, current_node : torch.Tensor, state : Dict[str, torch.Tensor], context : Dict[str, torch.Tensor]) -> torch.Tensor:
         r = current_node
@@ -194,11 +173,6 @@ class PlainConcatContextProver(ContextProvider):
         self.providers = providers
         for i, p in enumerate(providers):
             self.add_module("_plain_concat_context_provider_"+str(i), p)
-
-    def set_batch_range(self, batch_range: torch.Tensor) -> None:
-        self.batch_range = batch_range
-        for p in self.providers:
-            p.set_batch_range(batch_range)
 
     def forward(self, current_node : torch.Tensor, state : Dict[str, torch.Tensor], context : Dict[str, torch.Tensor]) -> torch.Tensor:
         contexts = [current_node] #shape (batch_size, some dimension)
