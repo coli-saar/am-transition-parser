@@ -17,6 +17,11 @@ python -m allenpipeline train <your config.jsonnet> -s models/<your model name> 
 You can use other command line arguments as well, see `python -m allenpipeline train --help`, in particular you can select the cuda device as follows:
 `-o '{trainer : {cuda_device : 0  } }'`.
 
+You can train an almost minimal configuration with the provided example AM dependency trees as follows:
+```
+python -m allenpipeline train configs/example_config.jsonnet -s models/example-model --include-package topdown_parser
+```
+
 ## Parsing
 There are different ways to parse, depending on what you want.
 
@@ -25,8 +30,8 @@ There are different ways to parse, depending on what you want.
   where `<list of beam sizes>` is simply `1` for greedy search, or for example `1 3` if you want to do greedy search AND beam search with beam size 3.
   This command will evaluate the AM dependency trees to graphs and compute F-scores with the gold standard.
  - You want to annotate an existing amconll file (with or without AM dependency trees in it). Then you should use the `topdown_parser/beam_search.py` script. Use the `--help` option to get information about how to structure the command line arguments.
-
-Currently, this is no direct way to parse a raw text file. 
+- You want to parse a raw text file. You can create an amconll file without AM dependency trees in it using the `raw_to_amconll.py` script in [am-parser](https://github.com/coli-saar/am-parser). 
+ **Beware**: this is not the way we prepared the test sets in our experiments, and you should consider using a raw-text model, that is a model 
 The way to go, would be to create an amconll file that contains the sentences in question but no AM dependency trees.
 
 
