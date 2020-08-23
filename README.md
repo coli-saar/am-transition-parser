@@ -170,4 +170,4 @@ data/
 ```
 
 ## Uni Saarland internal notes
-The lexica and some pre-trained models can be found in `/proj/irtg.shadow/EMNLP20/transition_systems/`.
+The lexica and some pre-trained models can be found in `/proj/irtg.shadow/EMNLP20/transition_systems/`. A conda environment is prepared already and it's called `pytorch1.4`.
