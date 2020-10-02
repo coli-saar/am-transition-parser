@@ -31,8 +31,7 @@ There are different ways to parse, depending on what you want.
   This command will evaluate the AM dependency trees to graphs and compute F-scores with the gold standard.
  - You want to annotate an existing amconll file (with or without AM dependency trees in it). Then you should use the `topdown_parser/beam_search.py` script. Use the `--help` option to get information about how to structure the command line arguments.
 - You want to parse a raw text file. You can create an amconll file without AM dependency trees in it using the `raw_to_amconll.py` script in [am-parser](https://github.com/coli-saar/am-parser). 
- **Beware**: this is not the way we prepared the test sets in our experiments, and you should consider using a raw-text model, that is a model 
-The way to go, would be to create an amconll file that contains the sentences in question but no AM dependency trees.
+ **Beware**: this is not the way we prepared the test sets in our experiments, and you should consider using a raw-text model, that is a model which does not actually use the POS tags, lemmas and named entity tags in the amconll file (this is achieved by using a configuration where the embedding size is 0 for those embedding types).
 
 
 ## Directory structure
@@ -170,4 +169,4 @@ data/
 ```
 
 ## Uni Saarland internal notes
-The lexica and some pre-trained models can be found in `/proj/irtg.shadow/EMNLP20/transition_systems/`.
+The lexica and some pre-trained models can be found in `/proj/irtg.shadow/EMNLP20/transition_systems/`. A conda environment is prepared already and it's called `pytorch1.4`.
