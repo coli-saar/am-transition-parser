@@ -129,6 +129,44 @@ local sdp_evaluator(name) = {
   }
 },
 
+ "AMR-2020" : {
+    "callbacks" : {
+    "after_validation" : {
+                 "type" : "parse-dev",
+                 "system_input" : "data/AMR/2020/dev/dev.amconll",
+                 "prefix": "AMR-2020_",
+                 "eval_command" : {
+                     "type" : "bash_evaluation_command",
+                     "gold_file" : "data/AMR/2020/dev/goldAMR.txt",
+                     "command" : 'java -cp '+ALTO_PATH+' de.saar.coli.amrtagging.formalisms.amr.tools.EvaluateCorpus --corpus {system_output} -o {tmp}/ --relabel --wn '+WORDNET+
+                         ' --lookup data/AMR/2020/lookup/ --th 10' +
+                     '&& python2 '+tool_dir+'/smatch/smatch.py -f {tmp}/parserOut.txt {gold_file} --pr --significant 4 > {tmp}/metrics.txt && cat {tmp}/metrics.txt',
+                     "result_regexes" : {"P" : [0, "Precision: (?P<value>.+)"],
+                                         "R" : [1, "Recall: (?P<value>.+)"],
+                                         "F" : [2, "F-score: (?P<value>.+)"]}
+             }
+  },
+     "after_training" : {
+          "type" : "parse-test",
+          "system_inputs" : ["data/AMR/2020/test/test.amconll"],
+          "names" : ["AMR-2020"],
+          "active" : parse_test,
+          "test_commands" : [
+              {
+               "type" : "bash_evaluation_command",
+               "gold_file" : "data/AMR/2020/test/goldAMR.txt",
+                "command" : 'java -cp '+ALTO_PATH+' de.saar.coli.amrtagging.formalisms.amr.tools.EvaluateCorpus --corpus {system_output} -o {tmp}/ --relabel --wn '+WORDNET+
+                    ' --lookup data/AMR/2020/lookup/ --th 10' +
+                '&& python2 '+tool_dir+'/smatch/smatch.py -f {tmp}/parserOut.txt {gold_file} --pr --significant 4 > {tmp}/metrics.txt && cat {tmp}/metrics.txt',
+                "result_regexes" : {"P" : [0, "Precision: (?P<value>.+)"],
+                                    "R" : [1, "Recall: (?P<value>.+)"],
+                                    "F" : [2, "F-score: (?P<value>.+)"]}
+              }
+          ]
+     }
+  }
+},
+
 "general_validation" : {
    "type" : "bash_evaluation_command",
    "command" : "python3 topdown_parser/evaluation/am_dep_las.py {gold_file} {system_output}",
@@ -219,6 +257,7 @@ local sdp_evaluator(name) = {
     "validation_metric" : {
         "AMR-2015" : "+AMR-2015_F",
         "AMR-2017" : "+AMR-2017_F",
+        "AMR-2020" : "+AMR-2020_F",
         "DM" : "+DM_F",
         "PAS" : "+PAS_F",
         "PSD" : "+PSD_F",

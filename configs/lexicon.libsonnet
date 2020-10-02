@@ -19,6 +19,15 @@ local data_paths = import 'data_paths.libsonnet';
              }
     },
 
+        "AMR-2020" : {
+            "sublexica" : {
+                        "edge_labels" : "data/AMR/2020/lexicon/edges.txt",
+                        "constants" : "data/AMR/2020/lexicon/constants.txt",
+                        "term_types" : "data/AMR/2020/lexicon/types.txt",
+                        "lex_labels" : "data/AMR/2020/lexicon/lex_labels.txt"
+                 }
+        },
+
     "DM" : {
         "sublexica" : {
                     "edge_labels" : data_paths["SDP_prefix"]+"DM/lexicon/edges.txt",
