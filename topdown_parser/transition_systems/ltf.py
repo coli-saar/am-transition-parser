@@ -24,6 +24,8 @@ from topdown_parser.transition_systems.utils import scores_to_selection, get_bes
 
 import numpy as np
 
+from .dfs import DFS
+
 
 def typ2supertag(lexicon : AdditionalLexicon) -> Dict[AMType, Set[int]]:
     _typ2supertag : Dict[AMType, Set[int]] = dict() #which supertags have the given type?
@@ -123,6 +125,9 @@ class LTF(TransitionSystem):
 
     def guarantees_well_typedness(self) -> bool:
         return True
+
+    def get_unconstrained_version(self) -> "TransitionSystem":
+        return DFS(self.children_order, self.pop_with_0, self.additional_lexicon)
 
     def validate_model(self, parser : "TopDownDependencyParser") -> None:
         """
