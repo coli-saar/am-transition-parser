@@ -70,7 +70,7 @@ if __name__ == "__main__":
             well_typed = 0
             total = 0
             with open(filename) as f:
-                for am_sentence in parse_amconll(f):
+                for am_sentence in parse_amconll(f, False):
                     cumulated_parse_time += float(am_sentence.attributes["normalized_parsing_time"])
                     well_typed += int(is_welltyped(am_sentence))
                     total += 1
