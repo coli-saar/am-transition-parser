@@ -1,4 +1,4 @@
-# topdown-parser
+# am-transition-parser
 A top-down transition-based AM dependency parser with quadratic run time complexity and well-typedness guarantees.
 Implemented are the LTF and LTL transition systems and unconstrained versions for normal dependency parsing.
 
