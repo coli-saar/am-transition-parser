@@ -62,7 +62,7 @@ local sdp_evaluator(name) = {
                      "type" : "bash_evaluation_command",
                      # does this work with tsv?
                      "gold_file" : "data/COGS_trainBert/dev/dev.tsv",
-                     "command" : 'java -cp '+ALTO_PATH+' de.saar.coli.amrtagging.formalisms.cogs.tools.ToCOGSCorpus --corpus {system_output} --gold {gold_file} --outFile {tmp}/',
+                     "command" : 'java -cp '+ALTO_PATH+' de.saar.coli.amrtagging.formalisms.cogs.tools.ToCOGSCorpus --corpus {system_output} --gold {gold_file} --outFile {tmp}/BLABLA',
                      "result_regexes" : {"ExactMatch" : [4, "Exact match accuracy: (?P<value>.+)"], # number is line number (start at 0)
                                          "EditDistance" : [5, "Average token-level edit distance: (?P<value>.+)"],}
              }
@@ -77,7 +77,7 @@ local sdp_evaluator(name) = {
                 "type" : "bash_evaluation_command",
                 # does this work with tsv?
                 "gold_file" : "data/COGS_trainBert/test/test.tsv",
-                "command" : 'java -cp '+ALTO_PATH+' de.saar.coli.amrtagging.formalisms.cogs.tools.ToCOGSCorpus --corpus {system_output} --gold {gold_file} --outFile {tmp}/',
+                "command" : 'java -cp '+ALTO_PATH+' de.saar.coli.amrtagging.formalisms.cogs.tools.ToCOGSCorpus --corpus {system_output} --gold {gold_file} --outFile {tmp}/BLABLA',
                 "result_regexes" : {"ExactMatch" : [4, "Exact match accuracy: (?P<value>.+)"], # number is line number (start at 0)
                                     "EditDistance" : [5, "Average token-level edit distance: (?P<value>.+)"],}
               }
