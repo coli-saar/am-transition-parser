@@ -296,7 +296,7 @@ local sdp_evaluator(name) = {
         "PAS" : "+PAS_F",
         "PSD" : "+PSD_F",
         "EDS" : "+Smatch_F",
-        "COGS_trainBert": "+COGS_ExactMatch"
+        "COGS_trainBert": "+COGS_trainBert_ExactMatch"
     }
 
 }
