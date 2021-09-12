@@ -63,12 +63,12 @@ local data_paths = import 'data_paths.libsonnet';
                     "lex_labels" : "data/EDS/lexicon/lex_labels.txt"
              }
     },
-    "COGS_trainBert" : {
+    "COGS" : {
         "sublexica" : {
-                    "edge_labels" : "data/COGS_trainBert/lexicon/edges.txt",
-                    "constants" : "data/COGS_trainBert/lexicon/constants.txt",
-                    "term_types" : "data/COGS_trainBert/lexicon/types.txt",
-                    "lex_labels" : "data/COGS_trainBert/lexicon/lex_labels.txt"
+                    "edge_labels" : "data/COGS/lexicon/edges.txt",
+                    "constants" : "data/COGS/lexicon/constants.txt",
+                    "term_types" : "data/COGS/lexicon/types.txt",
+                    "lex_labels" : "data/COGS/lexicon/lex_labels.txt"
              }
     },
 

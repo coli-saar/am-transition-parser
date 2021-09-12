@@ -52,16 +52,16 @@ local sdp_evaluator(name) = {
 };
 
 {
-"COGS_trainBert" : {
+"COGS" : {
     "callbacks" : {
     "after_validation" : {
                  "type" : "parse-dev",
-                 "system_input" : "data/COGS_trainBert/dev/dev.amconll",
-                 "prefix": "COGS_trainBert_",
+                 "system_input" : "data/COGS/dev/dev.amconll",
+                 "prefix": "COGS_",
                  "eval_command" : {
                      "type" : "bash_evaluation_command",
                      # does this work with tsv?
-                     "gold_file" : "data/COGS_trainBert/dev/dev.tsv",
+                     "gold_file" : "data/COGS/dev/dev.tsv",
                      "command" : 'java -cp '+ALTO_PATH+' de.saar.coli.amrtagging.formalisms.cogs.tools.ToCOGSCorpus --corpus {system_output} --gold {gold_file} --outFile {tmp}/BLABLA',
                      "result_regexes" : {"ExactMatch" : [4, "Exact match accuracy: (?P<value>.+)"], # number is line number (start at 0)
                                          "EditDistance" : [5, "Average token-level edit distance: (?P<value>.+)"],}
@@ -69,14 +69,14 @@ local sdp_evaluator(name) = {
   },
      "after_training" : {
           "type" : "parse-test",
-          "system_inputs" : ["data/COGS_trainBert/test/test.amconll"],
-          "names" : ["COGS_bertTrain"],
+          "system_inputs" : ["data/COGS/test/gen.amconll"],
+          "names" : ["COGS"],
           "active" : parse_test,
           "test_commands" : [
               {
                 "type" : "bash_evaluation_command",
                 # does this work with tsv?
-                "gold_file" : "data/COGS_trainBert/test/test.tsv",
+                "gold_file" : "data/COGS/test/gen.tsv",
                 "command" : 'java -cp '+ALTO_PATH+' de.saar.coli.amrtagging.formalisms.cogs.tools.ToCOGSCorpus --corpus {system_output} --gold {gold_file} --outFile {tmp}/BLABLA',
                 "result_regexes" : {"ExactMatch" : [4, "Exact match accuracy: (?P<value>.+)"], # number is line number (start at 0)
                                     "EditDistance" : [5, "Average token-level edit distance: (?P<value>.+)"],}
@@ -296,7 +296,7 @@ local sdp_evaluator(name) = {
         "PAS" : "+PAS_F",
         "PSD" : "+PSD_F",
         "EDS" : "+Smatch_F",
-        "COGS_trainBert": "+COGS_trainBert_ExactMatch"
+        "COGS": "+COGS_ExactMatch"
     }
 
 }

@@ -24,7 +24,7 @@ local eval_commands = import "../../configs/eval_commands.libsonnet";
 
 local data_paths = import "../../configs/data_paths.libsonnet";
 
-local task = "COGS_trainBert";
+local task = "COGS";
 
 local transition_system = {
     "type" : "ltl",
