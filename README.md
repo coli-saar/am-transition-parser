@@ -212,15 +212,15 @@ data/
         └── ...                                     //only needed later for testing
 ```
 4. __Train__ the parser using the following command.
-```
-python -m allenpipeline train training_configs/bert/COGS.jsonnet -s models/<your model name> --include-package topdown_parser
-```
+    ```
+    python -m allenpipeline train training_configs/bert/COGS.jsonnet -s models/<your model name> --include-package topdown_parser
+    ```
     Make sure you have the right train and dev files (see above). 
 
     __Notes:__ 
-        - If `models/<your model name>` already exists you will get an error. 
-        - On Saarland servers, training COGS on GPU currently does not work. Therefore you need to set `-o '{trainer : {cuda_device : -1 } }'`. 
-        - If you abort training early, the script will still save a model to `models/<your model name>/model.tar.gz`. On COGS, it may be good to keep training running a little longer even if performance does not seem to improve anymore.
+    - If `models/<your model name>` already exists you will get an error. 
+    - On Saarland servers, training COGS on GPU currently does not work. Therefore you need to set `-o '{trainer : {cuda_device : -1 } }'`. 
+    - If you abort training early, the script will still save a model to `models/<your model name>/model.tar.gz`. On COGS, it may be good to keep training running a little longer even if performance does not seem to improve anymore.
 
 5. __Testing:__ There are two different test sets in the COGS data set: the real test set and the generalization set.      
     - Again, the gold data in original COGS format (TSV files) can be found on https://github.com/najoungkim/COGS. 
@@ -241,7 +241,7 @@ python -m allenpipeline train training_configs/bert/COGS.jsonnet -s models/<your
     This will test `<your model>` on the `current_test` set and compute *ExactMatch* (the exact match accuracy on the logical forms) and *EditDistance*. 
     
     __Notes:__ 
-        -The performance on the real test set (in distribution) should be close to 100; the performance on the generalization set will be lower. 
+        - The performance on the real test set (in distribution) should be close to 100; the performance on the generalization set will be lower. 
         - Curiously, parsing on GPU is not a problem for Saarland servers.
 
 6. __Misc:__
