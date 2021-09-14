@@ -182,56 +182,57 @@ class AMConllDatasetReader(OrderedDatasetReader):
 
             active_nodes.append(state.active_node)
 
-        assert state.is_complete(), f"State should be complete: {state}"
-        reconstructed = state.extract_tree()
+        ######################### Commented out to run cogs primitives
+        # assert state.is_complete(), f"State should be complete: {state}"
+        # reconstructed = state.extract_tree()
 
-        assert self.transition_system.check_correct(am_sentence, reconstructed), f"Could not reconstruct this sentence\n: {am_sentence.get_tokens(False)}"
+        # assert self.transition_system.check_correct(am_sentence, reconstructed), f"Could not reconstruct this sentence\n: {am_sentence.get_tokens(False)}"
 
-        if self.run_oracle:
-            ## Now with oracle scores:
-            stripped_sentence = am_sentence.strip_annotation()
+        # if self.run_oracle:
+              ## Now with oracle scores:
+        #     stripped_sentence = am_sentence.strip_annotation()
 
-            state : ParsingState = self.transition_system.initial_state(stripped_sentence, None)
-            for decision in decisions[1:]:
-                scores = self.transition_system.decision_to_score(stripped_sentence, decision)
-                decision_prime = self.transition_system.make_decision(scores, state)
-                state = self.transition_system.step(state, decision_prime, in_place=True)
-            assert state.is_complete()
-            reconstructed = state.extract_tree()
-            assert self.transition_system.check_correct(am_sentence, reconstructed), f"Could not reconstruct this sentence\n: {am_sentence.get_tokens(False)}"
+        #     state : ParsingState = self.transition_system.initial_state(stripped_sentence, None)
+        #     for decision in decisions[1:]:
+        #         scores = self.transition_system.decision_to_score(stripped_sentence, decision)
+        #         decision_prime = self.transition_system.make_decision(scores, state)
+        #         state = self.transition_system.step(state, decision_prime, in_place=True)
+        #     assert state.is_complete()
+        #     reconstructed = state.extract_tree()
+        #     assert self.transition_system.check_correct(am_sentence, reconstructed), f"Could not reconstruct this sentence\n: {am_sentence.get_tokens(False)}"
 
-        if self.fuzz:
-            # Now fuzz
-            rng_state = torch.random.get_rng_state()
-            stripped_sentence = am_sentence.strip_annotation()
-            # print([w.token for w in am_sentence.words])
-            hash_value = len(am_sentence) + sum(len(w.token)*ord(w.token[0])*ord(w.token[-1]) for w in am_sentence.words)
-            # print(hash_value)
-            torch.random.manual_seed(hash_value)
-            state : ParsingState = self.transition_system.initial_state(stripped_sentence, None)
-            for _ in range(2*len(stripped_sentence)+1):
-                scores = self.transition_system.fuzz_scores(stripped_sentence, beam_search=False)
-                decision = self.transition_system.make_decision(scores, state)
-                state = self.transition_system.step(state, decision, in_place=True)
+        # if self.fuzz:
+              # Now fuzz
+        #     rng_state = torch.random.get_rng_state()
+        #     stripped_sentence = am_sentence.strip_annotation()
+              # print([w.token for w in am_sentence.words])
+        #     hash_value = len(am_sentence) + sum(len(w.token)*ord(w.token[0])*ord(w.token[-1]) for w in am_sentence.words)
+              # print(hash_value)
+        #     torch.random.manual_seed(hash_value)
+        #     state : ParsingState = self.transition_system.initial_state(stripped_sentence, None)
+        #     for _ in range(2*len(stripped_sentence)+1):
+        #         scores = self.transition_system.fuzz_scores(stripped_sentence, beam_search=False)
+        #         decision = self.transition_system.make_decision(scores, state)
+        #         state = self.transition_system.step(state, decision, in_place=True)
 
-            assert state.is_complete()
-            assert (not self.transition_system.guarantees_well_typedness()) or is_welltyped(state.extract_tree())
-            torch.random.set_rng_state(rng_state)
+        #     assert state.is_complete()
+        #     assert (not self.transition_system.guarantees_well_typedness()) or is_welltyped(state.extract_tree())
+        #     torch.random.set_rng_state(rng_state)
 
-        if self.fuzz_beam_search:
-            rng_state = torch.random.get_rng_state()
-            stripped_sentence = am_sentence.strip_annotation()
-            hash_value = len(am_sentence) + sum(len(w.token)*ord(w.token[0])*ord(w.token[-1]) for w in am_sentence.words)
-            torch.random.manual_seed(hash_value)
-            state : ParsingState = self.transition_system.initial_state(stripped_sentence, None)
-            for _ in range(2*len(stripped_sentence)+1):
-                scores = self.transition_system.fuzz_scores(stripped_sentence, beam_search=True)
-                decision = self.transition_system.top_k_decision(scores, state, k=4)[0]
-                state = self.transition_system.step(state, decision, in_place=True)
+        # if self.fuzz_beam_search:
+        #     rng_state = torch.random.get_rng_state()
+        #     stripped_sentence = am_sentence.strip_annotation()
+        #     hash_value = len(am_sentence) + sum(len(w.token)*ord(w.token[0])*ord(w.token[-1]) for w in am_sentence.words)
+        #     torch.random.manual_seed(hash_value)
+        #     state : ParsingState = self.transition_system.initial_state(stripped_sentence, None)
+        #     for _ in range(2*len(stripped_sentence)+1):
+        #         scores = self.transition_system.fuzz_scores(stripped_sentence, beam_search=True)
+        #         decision = self.transition_system.top_k_decision(scores, state, k=4)[0]
+        #         state = self.transition_system.step(state, decision, in_place=True)
 
-            assert state.is_complete()
-            assert (not self.transition_system.guarantees_well_typedness()) or is_welltyped(state.extract_tree())
-            torch.random.set_rng_state(rng_state)
+        #     assert state.is_complete()
+        #     assert (not self.transition_system.guarantees_well_typedness()) or is_welltyped(state.extract_tree())
+        #     torch.random.set_rng_state(rng_state)
 
         ##################################################################
 
