@@ -184,33 +184,33 @@ The lexica and some pre-trained models can be found in `/proj/irtg.shadow/EMNLP2
     - __Note:__ If you are working on the Saarland servers the TSV files can be found in `/proj/irtg/sempardata/cogs2021/data/COGS/data`. Different versions of the amconll files might be in `/proj/irtg/sempardata/cogs2021/retrain/input`.
 
 3. There are __different training sets__ (train and train_100) for COGS. To switch between the different training sets / embeddings / outputs of the unsupervised parser use the script `scripts/COGS_switch_train_set.sh -n <name of train set x>` This script creates the `train.amconll`, `dev.amconll`, and `gold-dev.amconll` needed to train the parser. It also creates a new lexicon. If such files already exist, they are overwritten. The script assumes the following structure:
-```
-data/
-└── COGS
-    ├── dev
-    │   ├── dev_{name of train set 1}.amconll
-    │   ├── dev_{name of train set 2}.amconll
-    │   ├── ...
-    │   ├── dev_{name of train set x}.amconll
-    │   ├── dev.amconll                             //if this file exists, it will be overwritten
-    │   └── dev.tsv                                 //only needed later for training
-    ├── gold-dev
-    │   ├── gold-dev_{name of train set 1}.amconll
-    │   ├── gold-dev_{name of train set 2}.amconll
-    │   ├── ...
-    │   ├── gold-dev_{name of train set x}.amconll
-    │   └── gold-dev.amconll                        //if this file exists, it will be overwritten
-    ├── lexicon
-    │   └── ...                                     //if these files exists, they will be overwritten
-    ├── train
-    │   ├── train_{name of train set 1}.amconll
-    │   ├── train_{name of train set 2}.amconll
-    │   ├── ...
-    │   ├── train_{name of train set x}.amconll
-    │   └── train.amconll                           //if this file exists, it will be overwritten
-    └── test
-        └── ...                                     //only needed later for testing
-```
+    ```
+    data/
+    └── COGS
+        ├── dev
+        │   ├── dev_{name of train set 1}.amconll
+        │   ├── dev_{name of train set 2}.amconll
+        │   ├── ...
+        │   ├── dev_{name of train set x}.amconll
+        │   ├── dev.amconll                             //if this file exists, it will be overwritten
+        │   └── dev.tsv                                 //only needed later for training
+        ├── gold-dev
+        │   ├── gold-dev_{name of train set 1}.amconll
+        │   ├── gold-dev_{name of train set 2}.amconll
+        │   ├── ...
+        │   ├── gold-dev_{name of train set x}.amconll
+        │   └── gold-dev.amconll                        //if this file exists, it will be overwritten
+        ├── lexicon
+        │   └── ...                                     //if these files exists, they will be overwritten
+        ├── train
+        │   ├── train_{name of train set 1}.amconll
+        │   ├── train_{name of train set 2}.amconll
+        │   ├── ...
+        │   ├── train_{name of train set x}.amconll
+        │   └── train.amconll                           //if this file exists, it will be overwritten
+        └── test
+            └── ...                                     //only needed later for testing
+    ```
 4. __Train__ the parser using the following command.
     ```
     python -m allenpipeline train training_configs/bert/COGS.jsonnet -s models/<your model name> --include-package topdown_parser
@@ -240,6 +240,6 @@ data/
     ```
     This will test `<your model>` on the `current_test` set and compute *ExactMatch* (the exact match accuracy on the logical forms) and *EditDistance*. __Notes:__ The performance on the real test set (in distribution) should be close to 100; the performance on the generalization set will be lower. --- Curiously, parsing on GPU is not a problem for Saarland servers.
 
-6. Misc:__
+6. __Misc:__
     - On COGS, we don't have PoS tag, Lemma, Named entity information available (columns empty in amconll, no embeddings for these, no extra files as input). 
     - Some of the training samples are 1-word sentences. To deal with these primitives, we commented out lines 184-236 in `topdown_parser/dataset_readers/amconll.py`. __Be aware of this if you want to train this branch of the parser on other formalisms / want to merge this branch in the future.__
