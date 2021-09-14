@@ -240,6 +240,6 @@ data/
     ```
     This will test `<your model>` on the `current_test` set and compute *ExactMatch* (the exact match accuracy on the logical forms) and *EditDistance*. __Notes:__ The performance on the real test set (in distribution) should be close to 100; the performance on the generalization set will be lower. --- Curiously, parsing on GPU is not a problem for Saarland servers.
 
-__6. Misc:__
+6. Misc:__
     - On COGS, we don't have PoS tag, Lemma, Named entity information available (columns empty in amconll, no embeddings for these, no extra files as input). 
     - Some of the training samples are 1-word sentences. To deal with these primitives, we commented out lines 184-236 in `topdown_parser/dataset_readers/amconll.py`. __Be aware of this if you want to train this branch of the parser on other formalisms / want to merge this branch in the future.__
