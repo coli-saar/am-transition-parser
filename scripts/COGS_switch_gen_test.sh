@@ -5,7 +5,7 @@ Arguments: \n
 \n\t     -t  switch to gen/test. Options: gen, test.
 "
 
-while getopts "dg:h" opt; do
+while getopts "dt:h" opt; do
     case $opt in
         h)  echo -e $usage
 	        exit
@@ -14,7 +14,7 @@ while getopts "dg:h" opt; do
            rm data/COGS/test/current_test.tsv
            exit
            ;;
-	    g) testset="$OPTARG"
+	    t) testset="$OPTARG"
             ;;
         \?) echo "Invalid option -$OPTARG" >&2
 	        ;;
