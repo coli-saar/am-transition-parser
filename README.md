@@ -226,18 +226,18 @@ The lexica and some pre-trained models can be found in `/proj/irtg.shadow/EMNLP2
     - Again, the gold data in original COGS format (TSV files) can be found on https://github.com/najoungkim/COGS. 
     - Additionally, you need empty amconll files. These can be created from the gold data using `raw_to_amconll.py` (see paragraph in [Parsing](https://github.com/coli-saar/am-transition-parser#parsing) above). The resulting files might contain errors. __Notes:__ If you are working on the Saarland servers, you can find the empty amconll files in `/proj/irtg/sempardata/cogs2021/retrain/`.
     - To run tests, save the tsv and amconll files in 
-    ```
-    data/COGS/test/
-    ├── test.amconll
-    ├── test.tsv
-    ├── gen.amconll
-    └── gen.tsv
-    ```
+        ```
+        data/COGS/test/
+        ├── test.amconll
+        ├── test.tsv
+        ├── gen.amconll
+        └── gen.tsv
+        ```
     Then run `bash scripts/COGS_switch_gen_test.sh -t <gen or test>` to create the files `data/COGS/test/current_test.amconll` and `data/COGS/test/current_test.tsv` from gen or test. If these files already exist, they will be overwritten.
     - Test the model (also see paragraph [Parsing](https://github.com/coli-saar/am-transition-parser#parsing) above). 
-    ```
-    python topdown_parser/parse_testset.py <your model> --batch_size <batch size> --beams <list of beam sizes> [--cuda-device <device>]
-    ```
+        ```
+        python topdown_parser/parse_testset.py <your model> --batch_size <batch size> --beams <list of beam sizes> [--cuda-device <device>]
+        ```
     This will test `<your model>` on the `current_test` set and compute *ExactMatch* (the exact match accuracy on the logical forms) and *EditDistance*. __Notes:__ The performance on the real test set (in distribution) should be close to 100; the performance on the generalization set will be lower. --- Curiously, parsing on GPU is not a problem for Saarland servers.
 
 6. __Misc:__
