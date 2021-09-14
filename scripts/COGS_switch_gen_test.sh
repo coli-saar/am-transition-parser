@@ -1,11 +1,12 @@
-usage="Switch between different gen and test.\n\n
+usage="NOTE: Switch to 'am-transition-parser/' to execute the script! \n
+Switch between different gen and test. Overwrites test.amconll and test.tsv. \n\n
 Arguments: \n
 \n\t     -d  delete test.amconll and test.tsv
 \n\t     -g  switch to gen
-\n\t     -t  switch to test
+\n\t     -t  switch to real_test
 "
 
-while getopts "d:g:t:h" opt; do
+while getopts "dgth" opt; do
     case $opt in
         h)  echo -e $usage
 	        exit
