@@ -183,7 +183,7 @@ The lexica and some pre-trained models can be found in `/proj/irtg.shadow/EMNLP2
     - The gold data in original COGS format (TSV files) can be found on https://github.com/najoungkim/COGS. 
     - __Note:__ If you are working on the Saarland servers the TSV files can be found in `/proj/irtg/sempardata/cogs2021/data/COGS/data`. Different versions of the amconll files might be in `/proj/irtg/sempardata/cogs2021/retrain/input`.
 
-3. There are __different training sets__ (train and train_100) for COGS. To switch between the different training sets / embeddings / outputs of the unsupervised parser use the script `scripts/COGS_switch_train_set.sh -n <name of train set x>` This script creates the train.amconll, dev.amconll, and gold-dev.amconll needed to train the parser. If such files already exist in the folders, they are overwritten. It also creates a new lexicon. To execute the script, you have to be in the root folder of the parser. The script assumes the following structure:
+3. There are __different training sets__ (train and train_100) for COGS. To switch between the different training sets / embeddings / outputs of the unsupervised parser use the script `scripts/COGS_switch_train_set.sh -n <name of train set x>` This script creates the `train.amconll`, `dev.amconll`, and `gold-dev.amconll` needed to train the parser. It also creates a new lexicon. If such files already exist, they are overwritten. The script assumes the following structure:
 ```
 data/
 └── COGS
@@ -215,7 +215,12 @@ data/
 ```
 python -m allenpipeline train training_configs/bert/COGS.jsonnet -s models/<your model name> --include-package topdown_parser
 ```
-Make sure you have the right train and dev files (see above). __Notes:__ If `models/<your model name>` already exists you will get an error. --- On Saarland servers, training COGS on GPU currently does not work. Therefore you need to set `-o '{trainer : {cuda_device : -1 } }'`. --- If you abort training early, the script will still save a model to `models/<your model name>/model.tar.gz`. On COGS, it may be good to keep training running a little longer even if performance does not seem to improve anymore.
+    Make sure you have the right train and dev files (see above). 
+
+    __Notes:__ 
+        - If `models/<your model name>` already exists you will get an error. 
+        - On Saarland servers, training COGS on GPU currently does not work. Therefore you need to set `-o '{trainer : {cuda_device : -1 } }'`. 
+        - If you abort training early, the script will still save a model to `models/<your model name>/model.tar.gz`. On COGS, it may be good to keep training running a little longer even if performance does not seem to improve anymore.
 
 5. __Testing:__ There are two different test sets in the COGS data set: the real test set and the generalization set.      
     - Again, the gold data in original COGS format (TSV files) can be found on https://github.com/najoungkim/COGS. 
@@ -229,12 +234,16 @@ Make sure you have the right train and dev files (see above). __Notes:__ If `mod
     └── gen.tsv
     ```
     Then run `bash scripts/COGS_switch_gen_test.sh -t <gen or test>` to create the files `data/COGS/test/current_test.amconll` and `data/COGS/test/current_test.tsv` from gen or test. If these files already exist, they will be overwritten.
-    - Execute
+    - Test the model (also see paragraph [Parsing](https://github.com/coli-saar/am-transition-parser#parsing) above). 
     ```
     python topdown_parser/parse_testset.py <your model> --batch_size <batch size> --beams <list of beam sizes> [--cuda-device <device>]
     ```
-    (also see paragraph [Parsing](https://github.com/coli-saar/am-transition-parser#parsing) above). This will test `<your model>` on the *current_test* set and compute *ExactMatch* (the exact match accuracy on the logical forms) and *EditDistance*. __Notes:__ The performance on the real test set (in distribution) should be close to 100; the performance on the generalization set will be lower. --- Curiously, parsing on GPU is not a problem for Saarland servers.
+    This will test `<your model>` on the `current_test` set and compute *ExactMatch* (the exact match accuracy on the logical forms) and *EditDistance*. 
+    
+    __Notes:__ 
+        -The performance on the real test set (in distribution) should be close to 100; the performance on the generalization set will be lower. 
+        - Curiously, parsing on GPU is not a problem for Saarland servers.
 
-    6. __Misc:__
-        - On COGS, we don't have PoS tag, Lemma, Named entity information available (columns empty in amconll, no embeddings for these, no extra files as input). 
-        - Some of the training samples are 1-word sentences. To deal with these primitives, we commented out lines 184-236 in `topdown_parser/dataset_readers/amconll.py`. __Be aware of this if you want to train this branch of the parser on other formalisms / want to merge this branch in the future.__
+6. __Misc:__
+    - On COGS, we don't have PoS tag, Lemma, Named entity information available (columns empty in amconll, no embeddings for these, no extra files as input). 
+    - Some of the training samples are 1-word sentences. To deal with these primitives, we commented out lines 184-236 in `topdown_parser/dataset_readers/amconll.py`. __Be aware of this if you want to train this branch of the parser on other formalisms / want to merge this branch in the future.__
