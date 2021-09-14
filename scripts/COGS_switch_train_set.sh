@@ -13,7 +13,7 @@ while getopts "dn:h" opt; do
 		d) 	rm data/COGS/train/train.amconll
 			rm data/COGS/dev/dev.amconll
 			rm data/COGS/gold-dev/gold-dev.amconll
-			rm data/COGS/lexicon/*
+			rm -f data/COGS/lexicon/*
 			exit
 			;;
 	    n) trainsetname="$OPTARG"
@@ -26,5 +26,5 @@ done
 cp data/COGS/train/train_$trainsetname.amconll data/COGS/train/train.amconll
 cp data/COGS/dev/dev_$trainsetname.amconll data/COGS/dev/dev.amconll
 cp data/COGS/gold-dev/gold-dev_$trainsetname.amconll data/COGS/gold-dev/gold-dev.amconll
-rm data/COGS/lexicon/*
+rm -f data/COGS/lexicon/*
 bash scripts/prepare_all_lexica.sh
