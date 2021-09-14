@@ -212,8 +212,13 @@ The lexica and some pre-trained models can be found in `/proj/irtg.shadow/EMNLP2
             └── ...                                     //see paragraph test data below
     ```
 4. __Test data:__ There are two different test sets in the COGS data set: the real test set and the generalization set.      
-    - Again, the gold data in original COGS format (TSV files) can be found on https://github.com/najoungkim/COGS. 
-    - Additionally, you need empty amconll files. These can be created from the gold data using `raw_to_amconll.py` (see paragraph in [Parsing](https://github.com/coli-saar/am-transition-parser#parsing) above). The resulting files might contain errors. __Note:__ If you are working on the Saarland servers, you can find the empty amconll files in `/proj/irtg/sempardata/cogs2021/retrain/`.
+    - Again, the gold data in original COGS format (TSV files) can be found at https://github.com/najoungkim/COGS. 
+    - Additionally, you need empty amconll files. These can be created from the gold data using the cogs aware am-tools.
+        ```
+        java -cp $jar de.saar.coli.amrtagging.formalisms.cogs.tools.PrepareDevData --corpus PATHTOFILE/test.tsv --outPath data/COGS/test/ --prefix test
+        java -cp $jar de.saar.coli.amrtagging.formalisms.cogs.tools.PrepareDevData --corpus PATHTOFILE/gen.tsv --outPath data/COGS/test/ --prefix gen
+        ```
+    __Note:__ If you are working on the Saarland servers, you can find the empty amconll files in `/proj/irtg/sempardata/cogs2021/retrain/`.
     - To prepare the test files, save the tsv and amconll files in 
         ```
         data/COGS/test/
