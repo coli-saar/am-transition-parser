@@ -250,7 +250,9 @@ The lexica and some pre-trained models can be found in `/proj/irtg.shadow/EMNLP2
     __Notes:__ 
     - The performance on the real test set (in distribution) should be close to 100; the performance on the generalization set will be lower. 
     - Curiously, parsing on GPU is not a problem for Saarland servers.
+    - Make sure to switch to the right lexicon by executing `bash scripts/COGS_switch_train_set.sh -n <train set the model was trained on>`. Otherwise you might get a tensor-shape error.
 
 7. __Misc:__
     - On COGS, we don't have PoS tag, Lemma, Named entity information available (columns empty in amconll, no embeddings for these, no extra files as input). 
     - Some of the training samples are 1-word sentences. To deal with these primitives, we commented out lines 184-236 in `topdown_parser/dataset_readers/amconll.py`. __Be aware of this if you want to train this branch of the parser on other formalisms / want to merge this branch in the future.__
+    - The model currently saves the state of the epoch that was 'best'. Because the metric maxes out quite quickly, this will be an early epoch (10-15). However, it might be useful to use a later epoch to achieve better results on the generalization set. *TBD*
