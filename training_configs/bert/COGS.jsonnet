@@ -218,7 +218,8 @@ local data_iterator = {
         "cuda_device": device,
         "optimizer": {
             "type": "adam",
-            "betas" : [0.9, 0.9]
+            "betas" : [0.9, 0.9],
+            "lr": 0.0001
         },
         "num_serialized_models_to_keep" : 1,
         "validation_metric" : eval_commands["validation_metric"][task]
