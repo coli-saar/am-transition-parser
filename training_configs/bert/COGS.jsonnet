@@ -1,4 +1,4 @@
-local num_epochs = 100;
+local num_epochs = 50;
 local device = 2;
 
 local word_dim = 200;
